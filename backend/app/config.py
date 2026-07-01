@@ -9,8 +9,10 @@ DATABASE_URL = os.getenv(
 )
 SESSION_EXPIRE_HOURS = 24
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
-ADMIN_EMAIL = "admin@hrms.com"
-ADMIN_PASSWORD = "Admin@123"
-ADMIN_FULL_NAME = "System Admin"
-PEPPER = os.getenv("PASSWORD_PEPPER", "SuperSecretPepperKey123!")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "System Admin")
+
+PEPPER = os.getenv("PASSWORD_PEPPER")
+
 
