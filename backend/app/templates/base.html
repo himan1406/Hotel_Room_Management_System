@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}HRMS{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="/" class="nav-brand">HRMS</a>
+            <div class="nav-links" id="navLinks">
+                <a href="/">Home</a>
+                <a href="/login" id="navLogin">Login</a>
+                <a href="/signup" id="navSignup">Sign Up</a>
+                <a href="/dashboard" id="navDashboard" style="display:none">Dashboard</a>
+                <a href="/admin" id="navAdmin" style="display:none">Admin</a>
+                <a href="#" id="navLogout" style="display:none" onclick="logout()">Logout</a>
+            </div>
+            <div id="navUser" class="nav-user" style="display:none"></div>
+        </div>
+    </nav>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

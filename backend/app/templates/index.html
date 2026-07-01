@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}HRMS - Home{% endblock %}
+{% block content %}
+<section class="hero">
+    <h1>Welcome to HRMS</h1>
+    <p>Hotel Room Management System — Book your perfect stay or list your property.</p>
+    <div class="hero-actions">
+        <a href="/login" class="btn btn-primary">Login</a>
+        <a href="/signup" class="btn btn-secondary">Sign Up</a>
+        <a href="/hotel-setup" class="btn btn-outline">Want to list your hotel?</a>
+    </div>
+</section>
+<section class="features">
+    <div class="card">
+        <h3>For Travelers</h3>
+        <p>Search and book hotels, villas, resorts and homestays at the best prices.</p>
+    </div>
+    <div class="card">
+        <h3>For Hotel Owners</h3>
+        <p>List your property, manage rooms, pricing, and availability with ease.</p>
+    </div>
+    <div class="card">
+        <h3>For Admins</h3>
+        <p>Approve new hotel registrations and manage the platform.</p>
+    </div>
+</section>
+{% endblock %}

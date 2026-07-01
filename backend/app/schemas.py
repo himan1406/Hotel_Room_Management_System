@@ -1,0 +1,113 @@
+from datetime import datetime
+from typing import Optional
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+
+class SignupRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255)
+    password: str = Field(..., min_length=6)
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class HotelRegisterRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255)
+    password: str = Field(..., min_length=6)
+    full_name: str = Field(..., min_length=2)
+    phone: Optional[str] = None
+
+
+class UserResponse(BaseModel):
+    id: UUID
+    email: str
+    role: str
+    full_name: Optional[str]
+    phone: Optional[str]
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
+class PendingHotelResponse(BaseModel):
+    id: UUID
+    email: str
+    full_name: Optional[str]
+    phone: Optional[str]
+    doc_url: Optional[str]
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ApproveRejectRequest(BaseModel):
+    id: UUID
+
+
+class PropertyCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    property_type: str = "hotel"
+    city_id: Optional[UUID] = None
+    district_id: Optional[UUID] = None
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    amenities: Optional[dict] = None
+
+
+class PropertyResponse(BaseModel):
+    id: UUID
+    name: str
+    description: Optional[str]
+    property_type: Optional[str]
+    city_id: Optional[UUID]
+    district_id: Optional[UUID]
+    address: Optional[str]
+    latitude: Optional[float]
+    longitude: Optional[float]
+    amenities: Optional[dict]
+    avg_rating: float
+    review_count: int
+    is_approved: bool
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RoomCreate(BaseModel):
+    room_type: str
+    base_price: float = Field(..., gt=0)
+    capacity_adults: int = Field(default=1, ge=1)
+    capacity_children: int = Field(default=0, ge=0)
+    total_quantity: int = Field(..., gt=0)
+    room_amenities: Optional[dict] = None
+    images: Optional[list] = None
+    extra_details: Optional[dict] = None
+
+
+class RoomResponse(BaseModel):
+    id: UUID
+    property_id: UUID
+    room_type: str
+    base_price: float
+    capacity_adults: int
+    capacity_children: int
+    total_quantity: int
+    room_amenities: Optional[dict]
+    images: Optional[list]
+    is_active: bool
+
+    class Config:
+        from_attributes = True
