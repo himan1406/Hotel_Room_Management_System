@@ -295,7 +295,8 @@ def upgrade() -> None:
     op.create_table(
         "property_documents",
         sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("property_id", UUID(as_uuid=True), sa.ForeignKey("properties.id", ondelete="CASCADE"), nullable=False),
+        # nullable=True — pending hotel reps submit docs before having an approved property
+        sa.Column("property_id", UUID(as_uuid=True), sa.ForeignKey("properties.id", ondelete="CASCADE"), nullable=True),
         sa.Column("uploaded_by", UUID(as_uuid=True), sa.ForeignKey("users.id")),
         sa.Column("doc_type", ENUM("cancellation_policy", "house_rules", "local_guide", "other", name="doc_type", create_type=False), server_default=sa.text("'other'")),
         sa.Column("title", sa.String(255)),
@@ -349,6 +350,26 @@ def upgrade() -> None:
 
     # Triggers
     create_triggers()
+
+    # ── Backfill ratings ────────────────────────────────────────────────────────
+    # The update_property_rating trigger only fires on future INSERT/UPDATE/DELETE
+    # on reviews. If any review data was loaded before this migration ran (e.g.
+    # via a data import or seed), avg_rating and review_count would stay at their
+    # default zeros forever. Recompute them once right now to bootstrap correctly.
+    op.execute("""
+        UPDATE properties p
+        SET
+            avg_rating = COALESCE((
+                SELECT ROUND(AVG(rating)::numeric, 1)
+                FROM reviews
+                WHERE property_id = p.id
+            ), 0),
+            review_count = COALESCE((
+                SELECT COUNT(*)
+                FROM reviews
+                WHERE property_id = p.id
+            ), 0)
+    """)
 
 
 def downgrade() -> None:

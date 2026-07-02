@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
 
@@ -111,3 +111,12 @@ class RoomResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class BookingCreate(BaseModel):
+    room_id: UUID
+    check_in: date
+    check_out: date
+    num_adults: int = Field(default=1, ge=1)
+    num_children: int = Field(default=0, ge=0)
+    idempotency_key: Optional[str] = Field(default=None, max_length=255)

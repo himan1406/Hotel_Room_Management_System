@@ -16,4 +16,21 @@ ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "System Admin")
 
 PEPPER = os.getenv("PASSWORD_PEPPER")
 
-
+# ── Startup guards ─────────────────────────────────────────────────────────────
+# Fail fast at import time so the app never starts in an insecure or broken
+# state. Without PEPPER every password hash is critically weakened; without
+# admin credentials the seed function silently skips creating the admin user.
+_missing = [
+    name
+    for name, value in [
+        ("PASSWORD_PEPPER", PEPPER),
+        ("ADMIN_EMAIL", ADMIN_EMAIL),
+        ("ADMIN_PASSWORD", ADMIN_PASSWORD),
+    ]
+    if not value
+]
+if _missing:
+    raise ValueError(
+        f"Missing required environment variable(s): {', '.join(_missing)}. "
+        "Set them in your .env file before starting the application."
+    )

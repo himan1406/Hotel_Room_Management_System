@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import auth, admin, hotels
+from app.routers import auth, admin, hotels, properties, bookings
 from app.pages import router as pages_router
 from app.seed import seed_admin
 
@@ -22,6 +22,8 @@ if os.path.exists(_uploads):
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(hotels.router)
+app.include_router(properties.router)
+app.include_router(bookings.router)
 app.include_router(pages_router)
 
 # ── Startup ───────────────────────────────────────────────

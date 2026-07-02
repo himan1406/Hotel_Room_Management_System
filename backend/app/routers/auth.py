@@ -2,7 +2,7 @@ import secrets
 import hashlib
 import hmac
 import bcrypt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from sqlalchemy.orm import Session
@@ -51,6 +51,7 @@ def _set_access_cookie(response: Response, token: str) -> None:
         key="access_token",
         value=token,
         httponly=True,
+        secure=True,   # only transmit over HTTPS
         samesite="lax",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
@@ -62,6 +63,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         key="refresh_token",
         value=token,
         httponly=True,
+        secure=True,   # only transmit over HTTPS
         samesite="lax",
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
         path="/api/auth/refresh",   # only sent to the refresh endpoint
@@ -79,7 +81,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     token_hash = hash_token(token)
     session = db.query(SessionModel).filter(
         SessionModel.token_hash == token_hash,
-        SessionModel.expires_at > datetime.utcnow()
+        SessionModel.expires_at > datetime.now(timezone.utc)
     ).first()
     if not session:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
@@ -153,7 +155,7 @@ def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
     session = SessionModel(
         user_id=user.id,
         token_hash=hash_token(access_token),
-        expires_at=datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
     db.add(session)
 
@@ -162,7 +164,7 @@ def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
     rt = RefreshToken(
         user_id=user.id,
         token_hash=hash_token(refresh_token),
-        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
     )
     db.add(rt)
     db.commit()
@@ -180,7 +182,8 @@ def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
 @router.post("/refresh")
 def refresh(request: Request, response: Response, db: Session = Depends(get_db)):
     """
-    Exchange a valid refresh token cookie for a new access token cookie.
+    Exchange a valid refresh token cookie for a new access token + refresh token pair.
+    The old refresh token is revoked (rotation) to detect token theft.
     Called automatically by the frontend when a 401 is received.
     """
     token = request.cookies.get("refresh_token")
@@ -190,7 +193,7 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
     token_hash = hash_token(token)
     rt = db.query(RefreshToken).filter(
         RefreshToken.token_hash == token_hash,
-        RefreshToken.expires_at > datetime.utcnow()
+        RefreshToken.expires_at > datetime.now(timezone.utc)
     ).first()
     if not rt:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
@@ -199,18 +202,41 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
-    # Rotate: delete old access sessions for this user, issue a new one
-    db.query(SessionModel).filter(SessionModel.user_id == user.id).delete()
+    # ── Rotate refresh token ───────────────────────────────────────────────────
+    # Revoke the consumed refresh token immediately so it can't be reused.
+    # If we detect the old token being presented again after rotation it means
+    # it was stolen — the right response there is to revoke all sessions (not
+    # implemented here but easy to add as a follow-up).
+    db.delete(rt)
+
+    new_refresh_token = generate_token()
+    new_rt = RefreshToken(
+        user_id=user.id,
+        token_hash=hash_token(new_refresh_token),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+    )
+    db.add(new_rt)
+
+    # ── Rotate access token ────────────────────────────────────────────────────
+    # Only invalidate the specific old access session that was tied to the
+    # consumed refresh token — other device sessions remain active.
+    old_access_token = request.cookies.get("access_token")
+    if old_access_token:
+        db.query(SessionModel).filter(
+            SessionModel.token_hash == hash_token(old_access_token)
+        ).delete()
+
     new_access_token = generate_token()
     session = SessionModel(
         user_id=user.id,
         token_hash=hash_token(new_access_token),
-        expires_at=datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
     db.add(session)
     db.commit()
 
     _set_access_cookie(response, new_access_token)
+    _set_refresh_cookie(response, new_refresh_token)
     return {"message": "Token refreshed", "role": user.role.value}
 
 

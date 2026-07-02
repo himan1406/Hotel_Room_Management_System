@@ -120,8 +120,30 @@ async function logout() {
     window.location.href = "/";
 }
 
+// ==================== Nav (mobile toggle) ====================
+function initNavToggle() {
+    const toggle = document.getElementById("navToggle");
+    const links = document.getElementById("navLinks");
+    if (!toggle || !links) return;
+
+    toggle.addEventListener("click", () => {
+        const isOpen = links.classList.toggle("open");
+        toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    });
+
+    // Close the mobile menu after picking a link
+    links.querySelectorAll("a").forEach(a => {
+        a.addEventListener("click", () => {
+            links.classList.remove("open");
+            toggle.setAttribute("aria-expanded", "false");
+        });
+    });
+}
+
 // ==================== Login ====================
 document.addEventListener("DOMContentLoaded", () => {
+    initNavToggle();
+
     const loginForm = document.getElementById("loginForm");
     if (loginForm) {
         loginForm.addEventListener("submit", async (e) => {
@@ -216,19 +238,263 @@ async function initDashboard() {
     }
 
     const view = document.getElementById("dashboardView");
+    const eyebrow = document.getElementById("dashboardEyebrow");
+    const heading = document.getElementById("dashboardHeading");
 
     if (user.role === "customer") {
-        view.innerHTML = `<div class="card"><h3>Welcome, ${user.full_name || user.email}!</h3><p>Customer dashboard coming soon. You'll be able to search and book hotels here.</p></div>`;
+        if (eyebrow) eyebrow.textContent = "Traveler Dashboard";
+        if (heading) heading.textContent = "Find your next stay";
+        renderCustomerDashboard(view, user);
         return;
     }
 
     if (user.role === "admin") {
+        if (eyebrow) eyebrow.textContent = "Platform Admin";
+        if (heading) heading.textContent = "Dashboard";
         view.innerHTML = `<div class="card"><p>Go to the <a href="/admin">Admin Panel</a> to manage registrations.</p></div>`;
         return;
     }
 
     // Hotel Rep Dashboard
+    if (eyebrow) eyebrow.textContent = "Hotel Rep Dashboard";
+    if (heading) heading.textContent = "Your Properties";
     renderHotelRepDashboard(view, user);
+}
+
+// ==================== Customer Dashboard: search + book + history ====================
+let lastSearchResults = [];
+
+async function renderCustomerDashboard(container, user) {
+    container.innerHTML = `
+        <div class="card search-panel">
+            <p class="eyebrow" style="margin-bottom:10px">Search stays</p>
+            <form id="searchForm" class="search-form">
+                <div class="form-group search-location">
+                    <label for="searchLocation">Where to?</label>
+                    <input type="text" id="searchLocation" placeholder="City, region or hotel name">
+                </div>
+                <div class="form-group">
+                    <label for="searchCheckIn">Check-in</label>
+                    <input type="date" id="searchCheckIn" required>
+                </div>
+                <div class="form-group">
+                    <label for="searchCheckOut">Check-out</label>
+                    <input type="date" id="searchCheckOut" required>
+                </div>
+                <div class="form-group">
+                    <label for="searchAdults">Adults</label>
+                    <input type="number" id="searchAdults" min="1" value="2">
+                </div>
+                <div class="form-group">
+                    <label for="searchChildren">Children</label>
+                    <input type="number" id="searchChildren" min="0" value="0">
+                </div>
+                <button type="submit" class="btn btn-primary">Search</button>
+            </form>
+            <div id="searchError" class="error-msg"></div>
+        </div>
+
+        <div id="searchResults"></div>
+
+        <div class="section-header" style="margin-top:44px">
+            <h3>My Bookings</h3>
+        </div>
+        <div id="myBookings"><div class="empty-state">Loading your bookings…</div></div>
+    `;
+
+    // Sensible defaults so the form is bookable with zero typing
+    const in1 = new Date(); in1.setDate(in1.getDate() + 1);
+    const in2 = new Date(); in2.setDate(in2.getDate() + 2);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const in1Str = in1.toISOString().slice(0, 10);
+    const in2Str = in2.toISOString().slice(0, 10);
+
+    const checkInEl = document.getElementById("searchCheckIn");
+    const checkOutEl = document.getElementById("searchCheckOut");
+    checkInEl.value = in1Str;
+    checkOutEl.value = in2Str;
+    checkInEl.min = todayStr;
+    checkOutEl.min = in1Str;
+
+    // Keep check-out after check-in as the person edits check-in
+    checkInEl.addEventListener("change", () => {
+        checkOutEl.min = checkInEl.value;
+        if (checkOutEl.value <= checkInEl.value) {
+            const next = new Date(checkInEl.value);
+            next.setDate(next.getDate() + 1);
+            checkOutEl.value = next.toISOString().slice(0, 10);
+        }
+    });
+
+    document.getElementById("searchForm").addEventListener("submit", (e) => {
+        e.preventDefault();
+        runPropertySearch();
+    });
+
+    loadMyBookings();
+}
+
+async function runPropertySearch() {
+    const resultsDiv = document.getElementById("searchResults");
+    const errDiv = document.getElementById("searchError");
+    errDiv.style.display = "none";
+
+    const params = new URLSearchParams({
+        check_in: document.getElementById("searchCheckIn").value,
+        check_out: document.getElementById("searchCheckOut").value,
+        adults: document.getElementById("searchAdults").value || "1",
+        children: document.getElementById("searchChildren").value || "0",
+    });
+    const location = document.getElementById("searchLocation").value.trim();
+    if (location) params.set("location", location);
+
+    resultsDiv.innerHTML = `<div class="empty-state">Searching…</div>`;
+    try {
+        const properties = await API.get(`/api/properties/search?${params.toString()}`);
+        lastSearchResults = properties;
+        renderSearchResults(properties);
+    } catch (err) {
+        errDiv.style.display = "block";
+        errDiv.textContent = err.message;
+        resultsDiv.innerHTML = "";
+    }
+}
+
+function renderSearchResults(properties) {
+    const resultsDiv = document.getElementById("searchResults");
+    if (properties.length === 0) {
+        resultsDiv.innerHTML = `<div class="empty-state">No stays match those dates yet. Try a different location or date range.</div>`;
+        return;
+    }
+
+    resultsDiv.innerHTML = `<div class="property-list">` + properties.map(p => `
+        <div class="property-card">
+            <h4>${escapeHtml(p.name)}</h4>
+            <div class="prop-type">${escapeHtml([p.city, p.district].filter(Boolean).join(", ") || "Location N/A")}${p.property_type ? " · " + escapeHtml(p.property_type) : ""}</div>
+            ${p.description ? `<p>${escapeHtml(p.description.slice(0, 110))}${p.description.length > 110 ? "…" : ""}</p>` : ""}
+            <p style="font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--ink-soft); margin:10px 0 14px;">From ₹${p.from_price} total &middot; ${p.review_count} review${p.review_count === 1 ? "" : "s"}</p>
+            <div class="room-pick-list">
+                ${p.rooms.map(r => `
+                    <div class="room-item">
+                        <h5>${escapeHtml(r.room_type)}</h5>
+                        <div class="room-details">
+                            <span>₹${r.base_price}/night</span>
+                            <span>Adults: ${r.capacity_adults}</span>
+                            <span>Children: ${r.capacity_children}</span>
+                            ${r.nights ? `<span>${r.nights} night${r.nights === 1 ? "" : "s"}</span>` : ""}
+                        </div>
+                        <button class="btn btn-secondary btn-small" onclick="openBookingModal('${p.id}', '${r.id}')">Book — ₹${r.total_price}</button>
+                    </div>
+                `).join("")}
+            </div>
+        </div>
+    `).join("") + `</div>`;
+}
+
+function openBookingModal(propertyId, roomId) {
+    const prop = lastSearchResults.find(p => p.id === propertyId);
+    if (!prop) return;
+    const room = prop.rooms.find(r => r.id === roomId);
+    if (!room) return;
+
+    const checkIn = document.getElementById("searchCheckIn").value;
+    const checkOut = document.getElementById("searchCheckOut").value;
+    const adults = parseInt(document.getElementById("searchAdults").value || "1");
+    const children = parseInt(document.getElementById("searchChildren").value || "0");
+
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay";
+    modal.innerHTML = `
+        <div class="modal">
+            <button class="close-modal" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+            <h3>Confirm Booking</h3>
+            <p style="font-weight:600; margin-bottom:4px;">${escapeHtml(prop.name)}</p>
+            <p style="color:var(--ink-soft); margin-bottom:18px;">${escapeHtml(room.room_type)} &middot; ${checkIn} → ${checkOut}</p>
+            <div class="room-details" style="margin-bottom:20px;">
+                <span>Adults: ${adults}</span>
+                <span>Children: ${children}</span>
+                <span>Nights: ${room.nights ?? "—"}</span>
+                <span>Total: ₹${room.total_price}</span>
+            </div>
+            <div id="bookingError" class="error-msg"></div>
+            <button id="confirmBookingBtn" class="btn btn-primary btn-full">Confirm &amp; Book</button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    const confirmBtn = document.getElementById("confirmBookingBtn");
+    confirmBtn.addEventListener("click", async () => {
+        const errDiv = document.getElementById("bookingError");
+        errDiv.style.display = "none";
+        confirmBtn.disabled = true;
+        try {
+            await API.post("/api/bookings", {
+                room_id: roomId,
+                check_in: checkIn,
+                check_out: checkOut,
+                num_adults: adults,
+                num_children: children,
+                idempotency_key: (window.crypto && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : `${roomId}-${checkIn}-${Date.now()}`,
+            });
+            modal.remove();
+            loadMyBookings();
+            runPropertySearch(); // refresh availability now that a unit is taken
+        } catch (err) {
+            errDiv.style.display = "block";
+            errDiv.textContent = err.message;
+            confirmBtn.disabled = false;
+        }
+    });
+}
+
+async function loadMyBookings() {
+    const container = document.getElementById("myBookings");
+    if (!container) return;
+    try {
+        const bookings = await API.get("/api/bookings");
+        renderMyBookings(bookings);
+    } catch (err) {
+        container.innerHTML = `<div class="empty-state">Couldn't load your bookings.</div>`;
+    }
+}
+
+function renderMyBookings(bookings) {
+    const container = document.getElementById("myBookings");
+    if (bookings.length === 0) {
+        container.innerHTML = `<div class="empty-state">No bookings yet. Search above to plan your next stay.</div>`;
+        return;
+    }
+
+    const statusBadge = { confirmed: "approved", pending: "pending", cancelled: "rejected", completed: "approved" };
+
+    container.innerHTML = `<div class="table-container"><table>
+        <thead><tr><th>Property</th><th>Room</th><th>Dates</th><th>Guests</th><th>Status</th><th>Total</th><th></th></tr></thead>
+        <tbody>
+        ${bookings.map(b => `
+            <tr>
+                <td>${escapeHtml(b.property_name)}</td>
+                <td>${escapeHtml(b.room_type)}</td>
+                <td>${b.check_in} → ${b.check_out}</td>
+                <td>${b.num_adults} adult${b.num_adults === 1 ? "" : "s"}${b.num_children ? `, ${b.num_children} child${b.num_children === 1 ? "" : "ren"}` : ""}</td>
+                <td><span class="badge badge-${statusBadge[b.status] || "pending"}">${b.status}</span></td>
+                <td>${b.total_price != null ? "₹" + b.total_price : "—"}</td>
+                <td>${(b.status === "pending" || b.status === "confirmed") && new Date(b.check_in) > new Date() ? `<button class="btn btn-danger btn-small" onclick="cancelBooking('${b.id}')">Cancel</button>` : ""}</td>
+            </tr>
+        `).join("")}
+        </tbody>
+    </table></div>`;
+}
+
+async function cancelBooking(bookingId) {
+    if (!confirm("Cancel this booking?")) return;
+    try {
+        await API.post(`/api/bookings/${bookingId}/cancel`);
+        loadMyBookings();
+    } catch (err) {
+        alert(err.message);
+    }
 }
 
 async function renderHotelRepDashboard(container, user) {

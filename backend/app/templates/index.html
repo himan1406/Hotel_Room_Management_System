@@ -2,26 +2,86 @@
 {% block title %}HRMS - Home{% endblock %}
 {% block content %}
 <section class="hero">
-    <h1>Welcome to HRMS</h1>
-    <p>Hotel Room Management System — Book your perfect stay or list your property.</p>
-    <div class="hero-actions">
-        <a href="/login" class="btn btn-primary">Login</a>
-        <a href="/signup" class="btn btn-secondary">Sign Up</a>
-        <a href="/hotel-setup" class="btn btn-outline">Want to list your hotel?</a>
+    <div class="hero-copy">
+        <p class="lede">Find your perfect stay</p>
+        <h1>Book Rooms, Not Regrets</h1>
+        <p>From beachside villas in Goa to hillside stays in Manali — search verified hotels, homestays and resorts across India, check real-time availability, and book in minutes. Every property is reviewed by our team before it goes live.</p>
+        <div class="hero-actions">
+            <a href="/signup" class="btn btn-primary">Start Booking</a>
+            <a href="/hotel-setup" class="btn btn-outline">List Your Hotel</a>
+        </div>
+    </div>
+
+    <div class="hero-visual" aria-hidden="true">
+        <svg viewBox="0 0 400 380" xmlns="http://www.w3.org/2000/svg">
+            <!-- ground -->
+            <line x1="30" y1="330" x2="370" y2="330" stroke="#1B1B4E" stroke-width="2" stroke-dasharray="2 10" stroke-linecap="round"/>
+
+            <!-- palm tree -->
+            <path d="M70 330 C70 280 78 250 74 220" fill="none" stroke="#1B1B4E" stroke-width="3" stroke-linecap="round"/>
+            <path d="M74 222 C50 210 40 190 34 178 C56 182 70 196 78 212" fill="#9C90E8" stroke="#1B1B4E" stroke-width="2.5"/>
+            <path d="M74 222 C96 206 108 188 116 172 C96 180 82 196 74 214" fill="#9C90E8" stroke="#1B1B4E" stroke-width="2.5"/>
+            <path d="M74 218 C58 196 52 180 52 164 C70 176 78 196 78 216" fill="#F3AFC4" stroke="#1B1B4E" stroke-width="2.5"/>
+
+            <!-- building -->
+            <rect x="120" y="150" width="200" height="180" rx="16" fill="#FBF6EF" stroke="#1B1B4E" stroke-width="3"/>
+
+            <!-- scalloped awning roof -->
+            <path d="M112 150
+                     q10 -26 20 0 q10 -26 20 0 q10 -26 20 0 q10 -26 20 0
+                     q10 -26 20 0 q10 -26 20 0 q10 -26 20 0 q10 -26 20 0
+                     Z" fill="#F3AFC4" stroke="#1B1B4E" stroke-width="3" stroke-linejoin="round"/>
+
+            <!-- windows -->
+            <rect x="144" y="196" width="46" height="46" rx="8" fill="#F1E7D4" stroke="#1B1B4E" stroke-width="2.5"/>
+            <line x1="167" y1="196" x2="167" y2="242" stroke="#1B1B4E" stroke-width="2"/>
+            <line x1="144" y1="219" x2="190" y2="219" stroke="#1B1B4E" stroke-width="2"/>
+
+            <rect x="250" y="196" width="46" height="46" rx="8" fill="#F1E7D4" stroke="#1B1B4E" stroke-width="2.5"/>
+            <line x1="273" y1="196" x2="273" y2="242" stroke="#1B1B4E" stroke-width="2"/>
+            <line x1="250" y1="219" x2="296" y2="219" stroke="#1B1B4E" stroke-width="2"/>
+
+            <!-- door -->
+            <path d="M196 330 L196 268 Q196 246 220 246 Q244 246 244 268 L244 330 Z" fill="#9C90E8" stroke="#1B1B4E" stroke-width="3"/>
+            <circle cx="233" cy="292" r="3.2" fill="#1B1B4E"/>
+
+            <!-- signage -->
+            <rect x="186" y="176" width="68" height="20" rx="10" fill="#1B1B4E"/>
+            <text x="220" y="190" text-anchor="middle" font-family="Space Mono, monospace" font-size="10" font-weight="700" fill="#FBF6EF" letter-spacing="1">HRMS</text>
+
+            <!-- suitcase -->
+            <rect x="332" y="292" width="46" height="38" rx="6" fill="#F1E7D4" stroke="#1B1B4E" stroke-width="2.5"/>
+            <path d="M346 292 v-10 a8 8 0 0 1 16 0 v10" fill="none" stroke="#1B1B4E" stroke-width="2.5"/>
+            <line x1="355" y1="292" x2="355" y2="330" stroke="#1B1B4E" stroke-width="2"/>
+
+            <!-- sparkles -->
+            <use href="#icon-sparkle" x="300" y="86" width="26" height="26" fill="#9C90E8"/>
+            <use href="#icon-sparkle" x="40" y="120" width="16" height="16" fill="#F3AFC4"/>
+        </svg>
     </div>
 </section>
+
+<div class="tagline-strip">
+    <svg class="stamp" viewBox="0 0 48 48" aria-hidden="true"><use href="#icon-stamp"/></svg>
+    <p>Villas, hotels &amp; resorts across India's most loved destinations — handpicked</p>
+    <svg class="stamp end" viewBox="0 0 48 48" aria-hidden="true"><use href="#icon-stamp"/></svg>
+</div>
+
 <section class="features">
     <div class="card">
+        <svg class="sparkle" viewBox="0 0 24 24"><use href="#icon-sparkle"/></svg>
         <h3>For Travelers</h3>
-        <p>Search and book hotels, villas, resorts and homestays at the best prices.</p>
+        <p>Search and book hotels, villas, resorts and homestays at the best prices, with every listing verified by our team.</p>
     </div>
     <div class="card">
+        <svg class="sparkle" viewBox="0 0 24 24"><use href="#icon-sparkle"/></svg>
         <h3>For Hotel Owners</h3>
-        <p>List your property, manage rooms, pricing, and availability with ease.</p>
+        <p>List your property, manage rooms, pricing and availability — and get discovered by travelers across the country.</p>
     </div>
     <div class="card">
+        <svg class="sparkle" viewBox="0 0 24 24"><use href="#icon-sparkle"/></svg>
         <h3>For Admins</h3>
-        <p>Approve new hotel registrations and manage the platform.</p>
+        <p>Review new hotel registrations, verify documents, and keep the platform trustworthy for everyone.</p>
     </div>
 </section>
 {% endblock %}

@@ -12,6 +12,10 @@ from app.routers.auth import require_role, get_current_user
 from app.schemas import PendingHotelResponse, ApproveRejectRequest
 from app.config import UPLOAD_DIR
 
+# ── Upload constraints ─────────────────────────────────────────────────────────
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024            # 5 MB hard cap
+ALLOWED_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 admin_required = require_role(UserRole.admin)
 
@@ -77,6 +81,11 @@ def reject_hotel(
     ).first()
     if not pending:
         raise HTTPException(status_code=404, detail="Registration not found")
+    if pending.status == PendingStatus.approved:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot reject an already-approved registration. Deactivate the user account instead.",
+        )
     pending.status = PendingStatus.rejected
     db.commit()
     return {"message": f"Registration for {pending.email} rejected"}
@@ -94,13 +103,41 @@ async def upload_doc(
     ).first()
     if not pending:
         raise HTTPException(status_code=404, detail="Registration not found")
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    ext = os.path.splitext(file.filename)[1] if file.filename else ".pdf"
-    filename = f"{pending_id}{ext}"
-    filepath = os.path.join(UPLOAD_DIR, filename)
+
+    # ── Authorisation ──────────────────────────────────────────────────────
+    # Only the registrant (matched by email) or an admin may upload a document.
+    is_owner = pending.email == user.email
+    is_admin = user.role == UserRole.admin
+    if not (is_owner or is_admin):
+        raise HTTPException(status_code=403, detail="Not authorised to upload for this registration")
+
+    # ── File validation ────────────────────────────────────────────────────
+    # Read once (so we can check size before touching the filesystem).
     content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
+        )
+
+    # Validate the extension against a strict allowlist.  Do NOT use the raw
+    # client-supplied filename — extract only the suffix and lower-case it.
+    raw_ext = os.path.splitext(file.filename or "")[1].lower()
+    if raw_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type '{raw_ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}.",
+        )
+
+    # ── Persist ───────────────────────────────────────────────────────────
+    # Build filename from the UUID + validated extension only — never trust the
+    # original client filename (avoids path-traversal and injection attacks).
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    filename = f"{pending_id}{raw_ext}"
+    filepath = os.path.join(UPLOAD_DIR, filename)
     with open(filepath, "wb") as f:
         f.write(content)
+
     pending.doc_url = f"/uploads/{filename}"
     db.commit()
     return {"message": "Document uploaded", "url": pending.doc_url}
