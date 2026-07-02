@@ -92,6 +92,18 @@ class Session(Base):
     user = relationship("User")
 
 
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash = Column(String(255), unique=True, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    user = relationship("User")
+
+
 class PendingHotelRegistration(Base):
     __tablename__ = "pending_hotel_registrations"
 
@@ -195,7 +207,8 @@ class PropertyDocument(Base):
     __tablename__ = "property_documents"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    # nullable=True — pending hotel reps submit docs before having an approved property
+    property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=True)
     uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     doc_type = Column(Enum(DocType), default=DocType.other)
     title = Column(String(255))

@@ -24,6 +24,8 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://postgres:r123saini@db:5432/hotel_booking_db
+    env_file:
+      - ./backend/.env
     volumes:
       - uploads:/app/uploads
       - ./backend:/app

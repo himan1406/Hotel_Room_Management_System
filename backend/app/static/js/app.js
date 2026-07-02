@@ -1,6 +1,8 @@
 // ==================== API Layer ====================
 const API = {
-    async request(method, path, body) {
+    _refreshing: null,   // deduplicate concurrent refresh calls
+
+    async request(method, path, body, _isRetry = false) {
         const opts = {
             method,
             headers: { "Content-Type": "application/json" },
@@ -10,9 +12,46 @@ const API = {
             opts.body = JSON.stringify(body);
         }
         const res = await fetch(path, opts);
+
+        // Auto-refresh on 401 — but NEVER for auth endpoints (they handle their own 401s)
+        if (res.status === 401 && !_isRetry && !path.startsWith("/api/auth/")) {
+            const refreshed = await API._tryRefresh();
+            if (refreshed) {
+                // Retry the original request once with the new access token
+                return API.request(method, path, body, true);
+            } else {
+                // Only force-redirect if we're on a protected page (not login/signup)
+                const authPages = ["/login", "/signup", "/hotel-register"];
+                const onAuthPage = authPages.some(p => window.location.pathname.startsWith(p));
+                if (!onAuthPage) {
+                    window.location.href = "/login";
+                }
+                throw new Error("Session expired. Please log in again.");
+            }
+        }
+
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Request failed");
         return data;
+    },
+
+    async _tryRefresh() {
+        // Deduplicate: if a refresh is already in-flight, wait for it
+        if (API._refreshing) return API._refreshing;
+        API._refreshing = (async () => {
+            try {
+                const res = await fetch("/api/auth/refresh", {
+                    method: "POST",
+                    credentials: "include",
+                });
+                return res.ok;
+            } catch {
+                return false;
+            } finally {
+                API._refreshing = null;
+            }
+        })();
+        return API._refreshing;
     },
 
     get(path) { return this.request("GET", path); },
