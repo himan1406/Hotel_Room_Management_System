@@ -1,12 +1,13 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import (
-    PendingHotelRegistration, PendingStatus, User, UserRole,
+    PendingHotelRegistration, PendingStatus, User, UserRole, Property, Location,
 )
 from app.routers.auth import require_role, get_current_user
 from app.schemas import PendingHotelResponse, ApproveRejectRequest
@@ -174,3 +175,74 @@ def toggle_rep_status(
     rep.is_active = not rep.is_active
     db.commit()
     return {"message": f"Hotel rep {'activated' if rep.is_active else 'deactivated'}"}
+
+
+# ── Property management ─────────────────────────────────────────────────────
+
+
+@router.get("/properties")
+def list_properties(
+    status: str = Query("all", regex="^(all|pending|approved)$"),
+    q: str = Query("", max_length=200),
+    rep_id: uuid.UUID = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(admin_required),
+):
+    qry = db.query(Property).outerjoin(Location, Property.city_id == Location.id)
+    if status == "pending":
+        qry = qry.filter(Property.is_approved == False)  # noqa: E712
+    elif status == "approved":
+        qry = qry.filter(Property.is_approved == True)  # noqa: E712
+    if q:
+        like = f"%{q}%"
+        qry = qry.filter(or_(
+            Property.name.ilike(like),
+            Property.address.ilike(like),
+            Location.name.ilike(like),
+        ))
+    if rep_id:
+        qry = qry.filter(Property.owner_rep_id == rep_id)
+    props = qry.order_by(Property.created_at.desc()).all()
+    return [
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "property_type": p.property_type.value if p.property_type else None,
+            "owner_name": p.owner.full_name if p.owner else None,
+            "owner_email": p.owner.email if p.owner else None,
+            "city": p.city.name if p.city else None,
+            "district": p.district.name if p.district else None,
+            "address": p.address,
+            "is_approved": p.is_approved,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        }
+        for p in props
+    ]
+
+
+@router.post("/properties/{property_id}/approve")
+def approve_property(
+    property_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(admin_required),
+):
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    prop.is_approved = True
+    db.commit()
+    return {"message": f"Property '{prop.name}' approved"}
+
+
+@router.post("/properties/{property_id}/reject")
+def reject_property(
+    property_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(admin_required),
+):
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    prop.is_approved = False
+    db.commit()
+    return {"message": f"Property '{prop.name}' unapproved"}

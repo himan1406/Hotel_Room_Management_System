@@ -9,6 +9,7 @@ DATABASE_URL = os.getenv(
 )
 ACCESS_TOKEN_EXPIRE_MINUTES = 20
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")

@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.routers import auth, admin, hotels, properties, bookings
 from app.pages import router as pages_router
-from app.seed import seed_admin
+from app.seed import seed_admin, seed_locations
 
 app = FastAPI(title="HRMS - Hotel Room Management System")
 
@@ -28,3 +28,4 @@ app.include_router(pages_router)
 
 # ── Startup ───────────────────────────────────────────────
 app.add_event_handler("startup", seed_admin)
+app.add_event_handler("startup", seed_locations)

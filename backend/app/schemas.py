@@ -76,6 +76,7 @@ class PropertyResponse(BaseModel):
     latitude: Optional[float]
     longitude: Optional[float]
     amenities: Optional[dict]
+    images: Optional[list] = None
     avg_rating: float
     review_count: int
     is_approved: bool

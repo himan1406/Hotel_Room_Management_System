@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from sqlalchemy.orm import Session
 
-from app.config import PEPPER, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+from app.config import PEPPER, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, COOKIE_SECURE
 
 from app.database import get_db
 from app.models import User, UserRole, Session as SessionModel, RefreshToken, PendingHotelRegistration, PendingStatus
@@ -51,7 +51,7 @@ def _set_access_cookie(response: Response, token: str) -> None:
         key="access_token",
         value=token,
         httponly=True,
-        secure=True,   # only transmit over HTTPS
+        secure=COOKIE_SECURE,
         samesite="lax",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
@@ -63,10 +63,10 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         key="refresh_token",
         value=token,
         httponly=True,
-        secure=True,   # only transmit over HTTPS
+        secure=COOKIE_SECURE,
         samesite="lax",
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-        path="/api/auth/refresh",   # only sent to the refresh endpoint
+        path="/api/auth/refresh",
     )
 
 
@@ -116,8 +116,17 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
         is_active=True,
     )
     db.add(user)
+    db.flush()
+    user_id = str(user.id)
     db.commit()
-    return {"message": "Account created successfully", "role": "customer"}
+    # Verify the user was saved
+    saved = db.query(User).filter(User.email == req.email).first()
+    return {
+        "message": "Account created successfully",
+        "role": "customer",
+        "user_id": user_id,
+        "verified_in_db": saved is not None,
+    }
 
 
 @router.post("/hotel-register")
@@ -263,3 +272,12 @@ def logout(response: Response, request: Request, db: Session = Depends(get_db)):
 @router.get("/me")
 def me(user: User = Depends(get_current_user)):
     return UserResponse.model_validate(user).model_dump()
+
+
+@router.get("/users")
+def list_users(db: Session = Depends(get_db)):
+    users = db.query(User).order_by(User.created_at).all()
+    return [
+        {"id": str(u.id), "email": u.email, "role": u.role.value, "created_at": str(u.created_at)}
+        for u in users
+    ]

@@ -132,6 +132,7 @@ class Property(Base):
     latitude = Column(Float)
     longitude = Column(Float)
     amenities = Column(JSONB, default=dict)
+    images = Column(JSONB, default=list)
     avg_rating = Column(Float, default=0)
     review_count = Column(Integer, default=0)
     trending_score = Column(Float, default=0)
