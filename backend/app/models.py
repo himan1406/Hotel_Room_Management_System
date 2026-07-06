@@ -112,7 +112,7 @@ class PendingHotelRegistration(Base):
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(255))
     phone = Column(String(20))
-    doc_url = Column(String(500))
+    doc_url = Column(Text)
     status = Column(Enum(PendingStatus), default=PendingStatus.pending)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

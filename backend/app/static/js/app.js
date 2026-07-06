@@ -835,6 +835,12 @@ function renderSearchResults(properties) {
 
     resultsDiv.innerHTML = `<div class="property-list">` + properties.map(p => `
         <div class="property-card">
+            <div class="property-thumb" onclick="openPropertyGallery('${p.id}')" title="View photos">
+                ${p.thumbnail
+                    ? `<img src="${escapeHtml(p.thumbnail)}" alt="${escapeHtml(p.name)}">`
+                    : `<div class="thumb-placeholder">No photos yet</div>`}
+                ${p.photo_count ? `<span class="photo-count-badge">🖼 ${p.photo_count}</span>` : ""}
+            </div>
             <h4>${escapeHtml(p.name)}</h4>
             <div class="prop-type">${escapeHtml([p.city, p.district].filter(Boolean).join(", ") || "Location N/A")}${p.property_type ? " · " + escapeHtml(p.property_type) : ""}</div>
             ${p.description ? `<p>${escapeHtml(p.description.slice(0, 110))}${p.description.length > 110 ? "…" : ""}</p>` : ""}
@@ -842,22 +848,92 @@ function renderSearchResults(properties) {
             <div class="room-pick-list">
                 ${p.rooms.map(r => `
                     <div class="room-item">
-                        <h5>${escapeHtml(r.room_type)}</h5>
-                        <div class="room-details">
-                            <span>₹${r.base_price}/night</span>
-                            <span>Adults: ${r.capacity_adults}</span>
-                            <span>Children: ${r.capacity_children}</span>
-                            ${r.nights ? `<span>${r.nights} night${r.nights === 1 ? "" : "s"}</span>` : ""}
+                        <div class="room-item-header">
+                            ${r.images && r.images.length > 0
+                                ? `<div class="room-item-thumb" onclick="openPropertyGallery('${p.id}', '${r.id}')" title="View photos"><img src="${escapeHtml(r.images[0])}" alt="${escapeHtml(r.room_type)}"></div>`
+                                : `<div class="room-item-thumb placeholder">🛏</div>`}
+                            <div style="flex:1">
+                                <h5 style="margin-bottom:2px">${escapeHtml(r.room_type)}</h5>
+                                <div class="room-details" style="margin-bottom:0">
+                                    <span>₹${r.base_price}/night</span>
+                                    <span>Adults: ${r.capacity_adults}</span>
+                                    <span>Children: ${r.capacity_children}</span>
+                                    ${r.nights ? `<span>${r.nights} night${r.nights === 1 ? "" : "s"}</span>` : ""}
+                                </div>
+                            </div>
                         </div>
                         <button class="btn btn-secondary btn-small" onclick="openBookingModal('${p.id}', '${r.id}')">Book — ₹${r.total_price}</button>
                     </div>
                 `).join("")}
             </div>
             <div class="prop-actions">
+                <button class="btn btn-outline btn-small" onclick="openPropertyGallery('${p.id}')">View Photos</button>
                 <button class="btn btn-secondary btn-small" onclick="contactHost('${p.id}')">Contact Host</button>
             </div>
         </div>
     `).join("") + `</div>`;
+}
+
+// ==================== Photo gallery (lightbox) ====================
+// Used by customers to browse every photo a hotel rep has uploaded for a
+// property and its rooms, since the search card only has room for one
+// thumbnail per listing.
+async function openPropertyGallery(propertyId, focusRoomId) {
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay gallery-modal";
+    modal.innerHTML = `
+        <div class="modal">
+            <button class="close-modal" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+            <h3>Photos</h3>
+            <div id="galleryBody"><div class="gallery-empty">Loading photos…</div></div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    let slides = [];
+    try {
+        const prop = await API.get(`/api/properties/${propertyId}`);
+        (prop.images || []).forEach(url => slides.push({ url, caption: prop.name }));
+        (prop.rooms || []).forEach(room => {
+            (room.images || []).forEach(url => slides.push({ url, caption: room.room_type, roomId: room.id }));
+        });
+    } catch (err) {
+        document.getElementById("galleryBody").innerHTML = `<div class="gallery-empty">Couldn't load photos.</div>`;
+        return;
+    }
+
+    const body = document.getElementById("galleryBody");
+    if (slides.length === 0) {
+        body.innerHTML = `<div class="gallery-empty">No photos uploaded for this property yet.</div>`;
+        return;
+    }
+
+    let index = 0;
+    if (focusRoomId) {
+        const found = slides.findIndex(s => s.roomId === focusRoomId);
+        if (found >= 0) index = found;
+    }
+
+    function render() {
+        const s = slides[index];
+        body.innerHTML = `
+            <div class="gallery-main">
+                ${slides.length > 1 ? `<button class="gallery-nav prev" onclick="event.stopPropagation();window.__galleryPrev()">&larr;</button>` : ""}
+                <img src="${escapeHtml(s.url)}" alt="${escapeHtml(s.caption)}">
+                ${slides.length > 1 ? `<button class="gallery-nav next" onclick="event.stopPropagation();window.__galleryNext()">&rarr;</button>` : ""}
+            </div>
+            <div class="gallery-caption">${escapeHtml(s.caption)} &middot; ${index + 1} / ${slides.length}</div>
+            <div class="gallery-thumbs">
+                ${slides.map((sl, i) => `<div class="g-thumb ${i === index ? "active" : ""}" onclick="window.__galleryJump(${i})"><img src="${escapeHtml(sl.url)}" alt=""></div>`).join("")}
+            </div>
+        `;
+    }
+
+    window.__galleryPrev = () => { index = (index - 1 + slides.length) % slides.length; render(); };
+    window.__galleryNext = () => { index = (index + 1) % slides.length; render(); };
+    window.__galleryJump = (i) => { index = i; render(); };
+
+    render();
 }
 
 function openBookingModal(propertyId, roomId) {
@@ -985,8 +1061,15 @@ async function renderHotelRepDashboard(container, user) {
     } else {
         html += `<div class="property-list">`;
         for (const p of properties) {
+            const photoCount = (p.images || []).length;
             html += `
                 <div class="property-card">
+                    <div class="property-thumb" onclick="managePropertyPhotos('${p.id}')" title="Manage photos">
+                        ${photoCount > 0
+                            ? `<img src="${escapeHtml(p.images[0])}" alt="${escapeHtml(p.name)}">`
+                            : `<div class="thumb-placeholder">Click to add photos</div>`}
+                        ${photoCount > 0 ? `<span class="photo-count-badge">🖼 ${photoCount}</span>` : ""}
+                    </div>
                     <h4>${escapeHtml(p.name)}</h4>
                     <div class="prop-type">${p.property_type || "N/A"} ${p.is_approved ? '<span class="badge badge-approved">Approved</span>' : '<span class="badge badge-pending">Pending</span>'}</div>
                     <p>${escapeHtml(p.description || "")}</p>
@@ -997,6 +1080,7 @@ async function renderHotelRepDashboard(container, user) {
                     ` : ''}
                     <div class="prop-actions">
                         <button class="btn btn-secondary btn-small" onclick="viewProperty('${p.id}')">Manage Rooms</button>
+                        <button class="btn btn-outline btn-small" onclick="managePropertyPhotos('${p.id}')">Photos${photoCount ? ` (${photoCount})` : ""}</button>
                         <button class="btn btn-outline btn-small" onclick="editProperty('${p.id}')">Edit</button>
                         <button class="btn btn-outline btn-small" onclick="viewPropertyReviews('${p.id}')">Reviews</button>
                     </div>
@@ -1189,9 +1273,9 @@ async function viewProperty(propertyId) {
                 ? `<div class="image-gallery" style="margin-bottom:10px">${r.images.map((url, i) => `
                     <div class="image-thumb">
                         <img src="${escapeHtml(url)}" alt="Room image">
-                        <button type="button" class="image-thumb-remove" onclick="deleteRoomImage('${propertyId}','${r.id}',${i})">&times;</button>
+                        <button type="button" class="image-thumb-remove" title="Remove photo" onclick="deleteRoomImage('${propertyId}','${r.id}',${i})">&times;</button>
                     </div>`).join("")}</div>`
-                : "";
+                : `<div class="gallery-empty" style="height:60px; margin-bottom:10px;">No photos yet for this room.</div>`;
             html += `
                 <div class="room-item">
                     <h5>${escapeHtml(r.room_type)}</h5>
@@ -1207,10 +1291,11 @@ async function viewProperty(propertyId) {
                             ${Object.keys(r.room_amenities).filter(k => r.room_amenities[k]).map(k => `<span class="badge badge-pending" style="background:#e3f2fd; color:#0d47a1; text-transform: capitalize;">${k.replace('_', ' ')}</span>`).join('')}
                         </div>
                     ` : ''}
+                    <p class="photo-section-label">Photos${r.images && r.images.length ? ` (${r.images.length})` : ""}</p>
                     ${roomImagesHtml}
                     <div class="image-upload-area" style="margin-bottom:10px">
                         <input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden id="roomUpload_${r.id}">
-                        <button class="btn btn-outline btn-small" onclick="document.getElementById('roomUpload_${r.id}').click()">+ Upload Room Images</button>
+                        <button class="btn btn-outline btn-small" onclick="document.getElementById('roomUpload_${r.id}').click()">+ Upload Room Photos</button>
                     </div>
                     <button class="btn btn-danger btn-small" onclick="deleteRoom('${propertyId}', '${r.id}')">Delete</button>
                 </div>
@@ -1350,14 +1435,7 @@ async function editProperty(propertyId) {
                     <label>Address</label>
                     <textarea id="propAddress" rows="2">${escapeHtml(prop.address || "")}</textarea>
                 </div>
-                <div class="form-group">
-                    <label>Property Images</label>
-                    <div id="editPropImages" class="image-gallery"></div>
-                    <div class="image-upload-area">
-                        <input type="file" id="editPropImageInput" accept="image/jpeg,image/png,image/webp" multiple hidden>
-                        <button type="button" class="btn btn-outline btn-small" onclick="document.getElementById('editPropImageInput').click()">+ Upload Images</button>
-                    </div>
-                </div>
+                <p style="font-size:0.85rem; color:var(--ink-faint); margin-bottom:18px;">Tip: use the "Photos" button on the property card to add or remove photos.</p>
                 <button type="submit" class="btn btn-primary btn-full">Save Changes</button>
             </form>
         </div>
@@ -1391,46 +1469,6 @@ async function editProperty(propertyId) {
             });
         } catch {}
     }
-
-    // ── Property images ──────────────────────────────────────────────────
-    function renderPropImages() {
-        const container = document.getElementById("editPropImages");
-        container.innerHTML = "";
-        (prop.images || []).forEach((url, i) => {
-            const div = document.createElement("div");
-            div.className = "image-thumb";
-            div.innerHTML = `
-                <img src="${escapeHtml(url)}" alt="Property image">
-                <button type="button" class="image-thumb-remove" data-index="${i}">&times;</button>
-            `;
-            div.querySelector(".image-thumb-remove").addEventListener("click", async () => {
-                try {
-                    const result = await API.del(`/api/hotels/${propertyId}/images/${i}`);
-                    prop.images = result.images;
-                    renderPropImages();
-                } catch (err) { alert(err.message); }
-            });
-            container.appendChild(div);
-        });
-    }
-    renderPropImages();
-
-    document.getElementById("editPropImageInput").addEventListener("change", async (e) => {
-        const files = e.target.files;
-        if (!files.length) return;
-        try {
-            const form = new FormData();
-            for (const f of files) form.append("files", f);
-            const res = await fetch(`/api/hotels/${propertyId}/images`, {
-                method: "POST", credentials: "include", body: form,
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || "Upload failed");
-            prop.images = data.images;
-            renderPropImages();
-        } catch (err) { alert(err.message); }
-        e.target.value = "";
-    });
 
     // When city changes, reload districts
     citySel.addEventListener("change", async () => {
@@ -1473,6 +1511,81 @@ async function deleteRoomImage(propertyId, roomId, imageIndex) {
         await API.del(`/api/hotels/${propertyId}/rooms/${roomId}/images/${imageIndex}`);
         viewProperty(propertyId);
     } catch (err) { alert(err.message); }
+}
+
+// ── Dedicated property photo manager (separate from Edit Property so photo
+// management doesn't get lost among the text fields) ─────────────────────
+async function managePropertyPhotos(propertyId) {
+    const prop = await API.get(`/api/hotels/${propertyId}`);
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay";
+    modal.innerHTML = `
+        <div class="modal">
+            <button class="close-modal" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+            <h3>Photos — ${escapeHtml(prop.name)}</h3>
+            <p class="photo-section-label">Property photos</p>
+            <div id="propPhotoGallery" class="image-gallery"></div>
+            <div class="image-upload-area">
+                <input type="file" id="propPhotoInput" accept="image/jpeg,image/png,image/webp" multiple hidden>
+                <button type="button" class="btn btn-outline btn-small" onclick="document.getElementById('propPhotoInput').click()">+ Upload Photos</button>
+            </div>
+            <p style="font-size:0.82rem; color:var(--ink-faint); margin-top:14px;">These show up first in search results. Add room-specific photos from "Manage Rooms" on each room.</p>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    let images = prop.images || [];
+
+    function renderGallery() {
+        const gallery = document.getElementById("propPhotoGallery");
+        if (images.length === 0) {
+            gallery.innerHTML = `<div class="gallery-empty" style="height:90px;">No photos yet — add some so travelers can see this property.</div>`;
+            return;
+        }
+        gallery.innerHTML = "";
+        images.forEach((url, i) => {
+            const div = document.createElement("div");
+            div.className = "image-thumb";
+            div.innerHTML = `
+                <img src="${escapeHtml(url)}" alt="Property photo ${i + 1}">
+                <button type="button" class="image-thumb-remove" title="Remove photo">&times;</button>
+            `;
+            div.querySelector(".image-thumb-remove").addEventListener("click", async () => {
+                if (!confirm("Remove this photo?")) return;
+                try {
+                    const result = await API.del(`/api/hotels/${propertyId}/images/${i}`);
+                    images = result.images;
+                    renderGallery();
+                } catch (err) { alert(err.message); }
+            });
+            gallery.appendChild(div);
+        });
+    }
+    renderGallery();
+
+    document.getElementById("propPhotoInput").addEventListener("change", async (e) => {
+        const files = e.target.files;
+        if (!files.length) return;
+        try {
+            const form = new FormData();
+            for (const f of files) form.append("files", f);
+            const res = await fetch(`/api/hotels/${propertyId}/images`, {
+                method: "POST", credentials: "include", body: form,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Upload failed");
+            images = data.images;
+            renderGallery();
+        } catch (err) { alert(err.message); }
+        e.target.value = "";
+    });
+
+    // Refresh the dashboard cards underneath so the new thumbnail/count show
+    // up as soon as the photo manager is closed.
+    modal.addEventListener("click", (e) => {
+        if (e.target === modal) { modal.remove(); initDashboard(); }
+    });
+    modal.querySelector(".close-modal").addEventListener("click", () => initDashboard());
 }
 
 async function deleteRoom(propertyId, roomId) {

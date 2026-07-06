@@ -10,17 +10,12 @@ DATABASE_URL = os.getenv(
 ACCESS_TOKEN_EXPIRE_MINUTES = 20
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "System Admin")
 
 PEPPER = os.getenv("PASSWORD_PEPPER")
 
-# ── Startup guards ─────────────────────────────────────────────────────────────
-# Fail fast at import time so the app never starts in an insecure or broken
-# state. Without PEPPER every password hash is critically weakened; without
-# admin credentials the seed function silently skips creating the admin user.
 _missing = [
     name
     for name, value in [

@@ -1,5 +1,6 @@
 import os
 import uuid
+import base64
 
 from datetime import date as date_type
 
@@ -10,7 +11,6 @@ from app.database import get_db
 from app.models import Property, Room, User, UserRole, Location, LocationType, Booking, BookingStatus, Availability
 from app.routers.auth import get_current_user, require_role
 from app.schemas import PropertyCreate, PropertyResponse, RoomCreate, RoomResponse
-from app.config import UPLOAD_DIR
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -235,12 +235,9 @@ async def _save_image(file: UploadFile, prefix: str) -> str:
     raw_ext = os.path.splitext(file.filename or "")[1].lower()
     if raw_ext not in ALLOWED_IMAGE_EXTENSIONS:
         raise HTTPException(status_code=415, detail=f"Unsupported format '{raw_ext}'. Allowed: {', '.join(sorted(ALLOWED_IMAGE_EXTENSIONS))}.")
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    filename = f"{prefix}_{uuid.uuid4().hex}{raw_ext}"
-    filepath = os.path.join(UPLOAD_DIR, filename)
-    with open(filepath, "wb") as f:
-        f.write(content)
-    return f"/uploads/{filename}"
+    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[raw_ext.lstrip(".")]
+    b64 = base64.b64encode(content).decode("ascii")
+    return f"data:{mime};base64,{b64}"
 
 
 @router.post("/{property_id}/images")
@@ -254,9 +251,10 @@ async def upload_property_images(
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
     urls = [await _save_image(f, f"prop_{property_id.hex}") for f in files]
-    if not prop.images:
-        prop.images = []
-    prop.images.extend(urls)
+    # Reassign instead of .extend() — SQLAlchemy only tracks dirty state
+    # on column reassignment, not in-place list mutation. Without this,
+    # the second image onwards is silently lost on commit.
+    prop.images = list(prop.images or []) + urls
     db.commit()
     return {"images": prop.images}
 
@@ -273,7 +271,13 @@ def delete_property_image(
         raise HTTPException(status_code=404, detail="Property not found")
     if not prop.images or image_index < 0 or image_index >= len(prop.images):
         raise HTTPException(status_code=404, detail="Image not found")
-    removed = prop.images.pop(image_index)
+    # Build a new list and reassign — same reason as the upload endpoint:
+    # SQLAlchemy only marks a JSONB column dirty on reassignment, not on
+    # in-place mutation. Popping directly on prop.images would return the
+    # trimmed list to the client but never actually persist the delete.
+    images = list(prop.images)
+    images.pop(image_index)
+    prop.images = images
     db.commit()
     return {"images": prop.images}
 
@@ -452,9 +456,8 @@ async def upload_room_images(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
     urls = [await _save_image(f, f"room_{room_id.hex}") for f in files]
-    if not room.images:
-        room.images = []
-    room.images.extend(urls)
+    # Reassign instead of .extend() — same SQLAlchemy JSONB dirty-tracking fix.
+    room.images = list(room.images or []) + urls
     db.commit()
     return {"images": room.images}
 
@@ -475,6 +478,11 @@ def delete_room_image(
         raise HTTPException(status_code=404, detail="Room not found")
     if not room.images or image_index < 0 or image_index >= len(room.images):
         raise HTTPException(status_code=404, detail="Image not found")
-    removed = room.images.pop(image_index)
+    # Reassign instead of mutating in place — same JSONB dirty-tracking fix
+    # as the property image delete above. Without this the row never
+    # actually updates even though the response looks correct.
+    images = list(room.images)
+    images.pop(image_index)
+    room.images = images
     db.commit()
     return {"images": room.images}

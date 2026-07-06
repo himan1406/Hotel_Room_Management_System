@@ -1,5 +1,6 @@
 import os
 import uuid
+import base64
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy import or_
@@ -11,7 +12,6 @@ from app.models import (
 )
 from app.routers.auth import require_role, get_current_user
 from app.schemas import PendingHotelResponse, ApproveRejectRequest
-from app.config import UPLOAD_DIR
 
 # ── Upload constraints ─────────────────────────────────────────────────────────
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024            # 5 MB hard cap
@@ -130,16 +130,12 @@ async def upload_doc(
             detail=f"Unsupported file type '{raw_ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}.",
         )
 
-    # ── Persist ───────────────────────────────────────────────────────────
-    # Build filename from the UUID + validated extension only — never trust the
-    # original client filename (avoids path-traversal and injection attacks).
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    filename = f"{pending_id}{raw_ext}"
-    filepath = os.path.join(UPLOAD_DIR, filename)
-    with open(filepath, "wb") as f:
-        f.write(content)
-
-    pending.doc_url = f"/uploads/{filename}"
+    # ── Persist as base64 ──────────────────────────────────────────────────
+    mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                "pdf": "application/pdf"}
+    mime = mime_map.get(raw_ext.lstrip("."), "application/octet-stream")
+    b64 = base64.b64encode(content).decode("ascii")
+    pending.doc_url = f"data:{mime};base64,{b64}"
     db.commit()
     return {"message": "Document uploaded", "url": pending.doc_url}
 

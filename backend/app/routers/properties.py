@@ -92,6 +92,17 @@ def search_properties(
 
         matching_rooms.sort(key=lambda r: r["total_price"])
 
+        # ── Thumbnail & photo count ────────────────────────────────────────
+        # Prefer a property-level photo (uploaded by the rep for the property
+        # as a whole) and only fall back to a room photo if the property has
+        # none. photo_count lets the UI show "12 photos" on the card so
+        # travelers know there's more to see before opening the gallery.
+        prop_images = prop.images or []
+        thumbnail = prop_images[0] if prop_images else next(
+            (r["images"][0] for r in matching_rooms if r["images"]), None
+        )
+        photo_count = len(prop_images) + sum(len(r["images"]) for r in matching_rooms)
+
         results.append({
             "id": str(prop.id),
             "name": prop.name,
@@ -103,7 +114,8 @@ def search_properties(
             "avg_rating": prop.avg_rating,
             "review_count": prop.review_count,
             "from_price": matching_rooms[0]["total_price"],
-            "thumbnail": matching_rooms[0]["images"][0] if matching_rooms[0]["images"] else None,
+            "thumbnail": thumbnail,
+            "photo_count": photo_count,
             "rooms": matching_rooms,
         })
 
@@ -134,6 +146,7 @@ def get_property_public(property_id: uuid.UUID, db: Session = Depends(get_db)):
         "district": prop.district.name if prop.district else None,
         "address": prop.address,
         "amenities": prop.amenities or {},
+        "images": prop.images or [],
         "avg_rating": prop.avg_rating,
         "review_count": prop.review_count,
         "owner_rep_id": str(prop.owner_rep_id) if prop.owner_rep_id else None,
