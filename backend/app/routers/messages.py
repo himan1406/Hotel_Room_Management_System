@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -8,6 +8,7 @@ from app.database import get_db
 from app.models import Message, Property, User
 from app.routers.auth import get_current_user
 from app.schemas import MessageSend
+from app.ws import notify_user
 
 router = APIRouter(prefix="/api/messages", tags=["messages"])
 
@@ -32,6 +33,7 @@ def send_message(
     req: MessageSend,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     if user.id == req.receiver_id:
         raise HTTPException(status_code=400, detail="Cannot message yourself")
@@ -54,7 +56,11 @@ def send_message(
     db.add(msg)
     db.commit()
     db.refresh(msg)
-    return _serialize(msg, user.id)
+    msg_data = _serialize(msg, user.id)
+    background_tasks.add_task(notify_user, req.receiver_id, {"type": "new_message", **msg_data})
+    background_tasks.add_task(notify_user, req.receiver_id, {"type": "conversations_updated"})
+    background_tasks.add_task(notify_user, user.id, {"type": "conversations_updated"})
+    return msg_data
 
 
 @router.get("/conversations")

@@ -166,8 +166,6 @@ def cancel_booking(
         raise HTTPException(status_code=404, detail="Booking not found")
     if booking.status not in (BookingStatus.pending, BookingStatus.confirmed):
         raise HTTPException(status_code=400, detail="This booking can't be cancelled")
-    if booking.check_in < date.today():
-        raise HTTPException(status_code=400, detail="Can't cancel a booking that has already started")
 
     booking.status = BookingStatus.cancelled
     db.commit()

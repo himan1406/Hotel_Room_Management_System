@@ -118,6 +118,23 @@ h1, h2, h3, h4 {
     padding: 22px 0 10px;
     position: relative;
     z-index: 50;
+    transition: padding var(--fast) var(--ease);
+}
+
+.navbar-compact {
+    padding: 12px 0 6px;
+}
+.navbar-compact .nav-links {
+    padding: 5px;
+}
+.navbar-compact .nav-links a,
+.navbar-compact .nav-links button {
+    font-size: 0.7rem;
+    padding: 5px 10px;
+}
+.navbar-compact .nav-brand {
+    font-size: 0.7rem;
+    padding-left: 8px;
 }
 
 .navbar .container {

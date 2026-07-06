@@ -78,11 +78,11 @@ async function checkAuth() {
     try {
         const user = await API.get("/api/auth/me");
         updateNav(user);
-        startMsgPolling();
+        connectWebSocket();
         return user;
     } catch {
         updateNav(null);
-        stopMsgPolling();
+        disconnectWebSocket();
         return null;
     }
 }
@@ -95,6 +95,8 @@ function updateNav(user) {
     const logoutLink = document.getElementById("navLogout");
     const navUser = document.getElementById("navUser");
     const navMessages = document.getElementById("navMessages");
+    const navHotelSetup = document.getElementById("navHotelSetup");
+    const navbar = document.querySelector(".navbar");
 
     if (user) {
         loginLink.style.display = "none";
@@ -109,6 +111,8 @@ function updateNav(user) {
             adminLink.style.display = "none";
         }
         navMessages.style.display = "inline-flex";
+        navHotelSetup.style.display = "none";
+        navbar.classList.add("navbar-compact");
     } else {
         loginLink.style.display = "inline";
         signupLink.style.display = "inline";
@@ -117,17 +121,20 @@ function updateNav(user) {
         logoutLink.style.display = "none";
         navUser.style.display = "none";
         navMessages.style.display = "none";
+        navHotelSetup.style.display = "inline";
+        navbar.classList.remove("navbar-compact");
     }
 }
 
 async function logout() {
-    stopMsgPolling();
+    disconnectWebSocket();
     await API.post("/api/auth/logout");
     window.location.href = "/";
 }
 
 // ==================== Messaging ====================
-let msgPollInterval = null;
+let ws = null;
+let wsReconnectTimer = null;
 let msgCurrentOtherId = null;
 let msgCurrentPropertyId = null;
 
@@ -272,29 +279,61 @@ async function contactHost(propertyId) {
     }
 }
 
-function startMsgPolling() {
-    stopMsgPolling();
-    msgPollInterval = setInterval(async () => {
+function connectWebSocket() {
+    disconnectWebSocket();
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${window.location.host}/ws/chat`);
+    ws.onopen = () => {
+        if (wsReconnectTimer) {
+            clearTimeout(wsReconnectTimer);
+            wsReconnectTimer = null;
+        }
+    };
+    ws.onmessage = (e) => {
         try {
-            const convos = await API.get("/api/messages/conversations");
-            updateMsgBadge(convos);
-            const panel = document.getElementById("chatPanel");
-            if (panel && panel.style.display !== "none") {
-                if (msgCurrentOtherId) {
-                    await loadMessages(msgCurrentOtherId, msgCurrentPropertyId, msgLastMessageId);
-                }
-                if (document.getElementById("chatConversations").style.display !== "none") {
-                    loadConversations();
-                }
-            }
+            handleWsEvent(JSON.parse(e.data));
         } catch {}
-    }, 5000);
+    };
+    ws.onclose = (e) => {
+        ws = null;
+        if (e.code !== 4001 && e.code !== 1000) {
+            wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+        }
+    };
 }
 
-function stopMsgPolling() {
-    if (msgPollInterval) {
-        clearInterval(msgPollInterval);
-        msgPollInterval = null;
+function disconnectWebSocket() {
+    if (ws) {
+        ws.onclose = null;
+        ws.close();
+        ws = null;
+    }
+    if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+    }
+}
+
+function handleWsEvent(data) {
+    if (data.type === "new_message") {
+        const panel = document.getElementById("chatPanel");
+        if (panel && panel.style.display !== "none" && msgCurrentOtherId === data.sender_id) {
+            const container = document.getElementById("chatMessages");
+            container.insertAdjacentHTML("beforeend", `
+                <div class="chat-msg chat-msg-theirs">
+                    ${escapeHtml(data.body)}
+                    <div class="chat-msg-time">${new Date(data.created_at).toLocaleString()}</div>
+                </div>
+            `);
+            container.scrollTop = container.scrollHeight;
+            API.put(`/api/messages/${data.id}/read`).catch(() => {});
+        } else {
+            loadConversations();
+        }
+    } else if (data.type === "conversations_updated") {
+        if (document.getElementById("chatPanel")?.style.display !== "none") {
+            loadConversations();
+        }
     }
 }
 
@@ -910,7 +949,7 @@ function renderMyBookings(bookings) {
                 <td>${b.num_adults} adult${b.num_adults === 1 ? "" : "s"}${b.num_children ? `, ${b.num_children} child${b.num_children === 1 ? "" : "ren"}` : ""}</td>
                 <td><span class="badge badge-${statusBadge[b.status] || "pending"}">${b.status}</span></td>
                 <td>${b.total_price != null ? "₹" + b.total_price : "—"}</td>
-                <td>${(b.status === "pending" || b.status === "confirmed") && new Date(b.check_in) > new Date() ? `<button class="btn btn-danger btn-small" onclick="cancelBooking('${b.id}')">Cancel</button>` : b.status === "completed" ? `<button class="btn btn-primary btn-small" onclick="openReviewModal('${b.id}')">Write Review</button>` : ""}</td>
+                <td>${b.status === "pending" || b.status === "confirmed" ? `<button class="btn btn-danger btn-small" onclick="cancelBooking('${b.id}')">Cancel</button>` : b.status === "completed" ? `<button class="btn btn-primary btn-small" onclick="openReviewModal('${b.id}')">Write Review</button>` : ""}</td>
             </tr>
         `).join("")}
         </tbody>

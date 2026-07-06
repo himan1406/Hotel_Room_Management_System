@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.routers import auth, admin, hotels, properties, bookings, messages, reviews
+from app import ws
 from app.pages import router as pages_router
 from app.seed import seed_admin, seed_locations
 
@@ -26,6 +27,7 @@ app.include_router(properties.router)
 app.include_router(bookings.router)
 app.include_router(messages.router)
 app.include_router(reviews.router)
+app.include_router(ws.router)
 app.include_router(pages_router)
 
 # ── Startup ───────────────────────────────────────────────
