@@ -121,3 +121,49 @@ class BookingCreate(BaseModel):
     num_adults: int = Field(default=1, ge=1)
     num_children: int = Field(default=0, ge=0)
     idempotency_key: Optional[str] = Field(default=None, max_length=255)
+
+
+class ReviewCreate(BaseModel):
+    booking_id: UUID
+    rating: int = Field(..., ge=1, le=5)
+    comment: Optional[str] = None
+
+
+class ReviewRespond(BaseModel):
+    response: str
+
+
+class ReviewResponse(BaseModel):
+    id: UUID
+    booking_id: UUID
+    customer_id: UUID
+    property_id: UUID
+    rating: int
+    comment: Optional[str]
+    customer_name: Optional[str] = None
+    rep_response: Optional[str] = None
+    responded_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MessageSend(BaseModel):
+    receiver_id: UUID
+    property_id: Optional[UUID] = None
+    body: str = Field(..., min_length=1, max_length=5000)
+
+
+class MessageResponse(BaseModel):
+    id: UUID
+    sender_id: UUID
+    receiver_id: UUID
+    property_id: UUID
+    body: str
+    is_read: bool
+    sender_name: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

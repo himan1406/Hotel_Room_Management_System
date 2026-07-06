@@ -78,9 +78,11 @@ async function checkAuth() {
     try {
         const user = await API.get("/api/auth/me");
         updateNav(user);
+        startMsgPolling();
         return user;
     } catch {
         updateNav(null);
+        stopMsgPolling();
         return null;
     }
 }
@@ -92,6 +94,7 @@ function updateNav(user) {
     const adminLink = document.getElementById("navAdmin");
     const logoutLink = document.getElementById("navLogout");
     const navUser = document.getElementById("navUser");
+    const navMessages = document.getElementById("navMessages");
 
     if (user) {
         loginLink.style.display = "none";
@@ -105,6 +108,7 @@ function updateNav(user) {
         } else {
             adminLink.style.display = "none";
         }
+        navMessages.style.display = "inline-flex";
     } else {
         loginLink.style.display = "inline";
         signupLink.style.display = "inline";
@@ -112,12 +116,356 @@ function updateNav(user) {
         adminLink.style.display = "none";
         logoutLink.style.display = "none";
         navUser.style.display = "none";
+        navMessages.style.display = "none";
     }
 }
 
 async function logout() {
+    stopMsgPolling();
     await API.post("/api/auth/logout");
     window.location.href = "/";
+}
+
+// ==================== Messaging ====================
+let msgPollInterval = null;
+let msgCurrentOtherId = null;
+let msgCurrentPropertyId = null;
+
+function toggleChatPanel() {
+    const panel = document.getElementById("chatPanel");
+    if (panel.style.display === "none" || !panel.style.display) {
+        panel.style.display = "flex";
+        loadConversations();
+    } else {
+        panel.style.display = "none";
+    }
+}
+
+function showChatConversations() {
+    document.getElementById("chatConversations").style.display = "block";
+    document.getElementById("chatConversationView").style.display = "none";
+    msgCurrentOtherId = null;
+    msgCurrentPropertyId = null;
+}
+
+async function loadConversations() {
+    const container = document.getElementById("chatConversations");
+    try {
+        const convos = await API.get("/api/messages/conversations");
+        if (convos.length === 0) {
+            container.innerHTML = `<div class="empty-state" style="padding:20px;text-align:center;">No conversations yet.</div>`;
+            return;
+        }
+        container.innerHTML = convos.map(c => `
+            <div class="chat-conv-item" onclick="openConversation('${c.other_user_id}', '${c.property_id || ''}', '${escapeHtml(c.property_name)}', '${escapeHtml(c.other_user_name)}')">
+                <div class="chat-conv-avatar">${escapeHtml(c.other_user_name.charAt(0).toUpperCase())}</div>
+                <div class="chat-conv-info">
+                    <div class="chat-conv-name">${escapeHtml(c.other_user_name)}</div>
+                    <div class="chat-conv-preview">${escapeHtml(c.property_name)} — ${escapeHtml(c.last_message)}</div>
+                </div>
+                ${c.unread_count > 0 ? `<span class="chat-conv-badge">${c.unread_count}</span>` : ""}
+            </div>
+        `).join("");
+        updateMsgBadge(convos);
+    } catch {
+        container.innerHTML = `<div class="empty-state" style="padding:20px;text-align:center;">Could not load conversations.</div>`;
+    }
+}
+
+function updateMsgBadge(convos) {
+    const total = convos.reduce((sum, c) => sum + c.unread_count, 0);
+    const badge = document.getElementById("msgBadge");
+    if (total > 0) {
+        badge.style.display = "inline";
+        badge.textContent = total;
+    } else {
+        badge.style.display = "none";
+    }
+}
+
+async function openConversation(otherUserId, propertyId, propertyName, otherName) {
+    msgCurrentOtherId = otherUserId;
+    msgCurrentPropertyId = propertyId || null;
+    document.getElementById("chatConversations").style.display = "none";
+    document.getElementById("chatConversationView").style.display = "flex";
+    const title = propertyName ? `Re: ${propertyName} — ${otherName}` : otherName;
+    document.getElementById("chatViewTitle").textContent = title;
+    await loadMessages(otherUserId, propertyId);
+}
+
+async function loadMessages(otherUserId, propertyId, afterId) {
+    const container = document.getElementById("chatMessages");
+    try {
+        let url = `/api/messages/conversation/${otherUserId}`;
+        const params = [];
+        if (propertyId) params.push(`property_id=${propertyId}`);
+        if (afterId) params.push(`after_id=${afterId}`);
+        if (params.length) url += `?${params.join("&")}`;
+        const msgs = await API.get(url);
+        if (afterId) {
+            if (msgs.length === 0) return;
+            container.insertAdjacentHTML("beforeend", msgs.map(m => `
+                <div class="chat-msg ${m.is_mine ? "chat-msg-mine" : "chat-msg-theirs"}">
+                    ${escapeHtml(m.body)}
+                    <div class="chat-msg-time">${new Date(m.created_at).toLocaleString()}</div>
+                </div>
+            `).join(""));
+            container.scrollTop = container.scrollHeight;
+            msgLastMessageId = msgs[msgs.length - 1].id;
+            for (const m of msgs) {
+                if (!m.is_mine && !m.is_read) {
+                    API.put(`/api/messages/${m.id}/read`).catch(() => {});
+                }
+            }
+        } else {
+            container.innerHTML = msgs.map(m => `
+                <div class="chat-msg ${m.is_mine ? "chat-msg-mine" : "chat-msg-theirs"}">
+                    ${escapeHtml(m.body)}
+                    <div class="chat-msg-time">${new Date(m.created_at).toLocaleString()}</div>
+                </div>
+            `).join("") || `<div class="empty-state" style="padding:20px;text-align:center;">No messages yet. Say hello!</div>`;
+            container.scrollTop = container.scrollHeight;
+            if (msgs.length > 0) {
+                msgLastMessageId = msgs[msgs.length - 1].id;
+            }
+            for (const m of msgs) {
+                if (!m.is_mine && !m.is_read) {
+                    API.put(`/api/messages/${m.id}/read`).catch(() => {});
+                }
+            }
+        }
+    } catch {
+        if (!afterId) {
+            container.innerHTML = `<div class="empty-state" style="padding:20px;text-align:center;">Could not load messages.</div>`;
+        }
+    }
+}
+
+async function sendChatMessage() {
+    const input = document.getElementById("chatMessageInput");
+    const body = input.value.trim();
+    if (!body || !msgCurrentOtherId) return;
+    input.value = "";
+    try {
+        await API.post("/api/messages", {
+            receiver_id: msgCurrentOtherId,
+            property_id: msgCurrentPropertyId,
+            body,
+        });
+        await loadMessages(msgCurrentOtherId, msgCurrentPropertyId);
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function contactHost(propertyId) {
+    try {
+        const prop = await API.get(`/api/properties/${propertyId}`);
+        if (!prop.owner_rep_id) {
+            alert("This property does not have a host assigned yet.");
+            return;
+        }
+        toggleChatPanel();
+        openConversation(prop.owner_rep_id, propertyId, prop.name, prop.owner_name || "Host");
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+function startMsgPolling() {
+    stopMsgPolling();
+    msgPollInterval = setInterval(async () => {
+        try {
+            const convos = await API.get("/api/messages/conversations");
+            updateMsgBadge(convos);
+            const panel = document.getElementById("chatPanel");
+            if (panel && panel.style.display !== "none") {
+                if (msgCurrentOtherId) {
+                    await loadMessages(msgCurrentOtherId, msgCurrentPropertyId, msgLastMessageId);
+                }
+                if (document.getElementById("chatConversations").style.display !== "none") {
+                    loadConversations();
+                }
+            }
+        } catch {}
+    }, 5000);
+}
+
+function stopMsgPolling() {
+    if (msgPollInterval) {
+        clearInterval(msgPollInterval);
+        msgPollInterval = null;
+    }
+}
+
+// ==================== Reviews ====================
+async function openReviewModal(bookingId) {
+    const existing = document.getElementById("reviewModalOverlay");
+    if (existing) existing.remove();
+    const overlay = document.createElement("div");
+    overlay.id = "reviewModalOverlay";
+    overlay.className = "modal-overlay";
+    overlay.style.display = "flex";
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:440px">
+            <span class="close-modal" onclick="closeReviewModal()">&times;</span>
+            <h3>Write a Review</h3>
+            <input type="hidden" id="reviewBookingId" value="${bookingId}">
+            <div class="form-group">
+                <label>Rating</label>
+                <div style="font-size:1.6rem;cursor:pointer;color:var(--sand-deep);">
+                    ${[1,2,3,4,5].map(i => `<span class="review-star" data-value="${i}" onmouseenter="hoverStar(${i})" onmouseleave="resetStars()" onclick="setRating(${i})" style="transition:color var(--fast) var(--ease);">&#9733;</span>`).join("")}
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="reviewComment">Comment (optional)</label>
+                <textarea id="reviewComment" rows="4" placeholder="Share your experience..." style="width:100%;padding:10px 14px;border:2px solid var(--sand-deep);border-radius:var(--radius-sm);font-family:'Work Sans',sans-serif;font-size:0.9rem;resize:vertical;background:var(--paper);color:var(--ink);"></textarea>
+            </div>
+            <div id="reviewError" style="display:none;color:var(--bad);font-size:0.88rem;margin-bottom:12px;"></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button class="btn btn-secondary" onclick="closeReviewModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitReview()">Submit Review</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+function closeReviewModal() {
+    const modal = document.getElementById("reviewModalOverlay");
+    if (modal) modal.remove();
+}
+
+let selectedRating = 0;
+
+function hoverStar(val) {
+    document.querySelectorAll(".review-star").forEach(s => {
+        s.style.color = parseInt(s.dataset.value) <= val ? "var(--lilac-deep)" : "var(--sand-deep)";
+    });
+}
+
+function resetStars() {
+    document.querySelectorAll(".review-star").forEach(s => {
+        s.style.color = parseInt(s.dataset.value) <= selectedRating ? "var(--lilac-deep)" : "var(--sand-deep)";
+    });
+}
+
+function setRating(val) {
+    selectedRating = val;
+    resetStars();
+}
+
+async function submitReview() {
+    const bookingId = document.getElementById("reviewBookingId").value;
+    const comment = document.getElementById("reviewComment").value.trim();
+    const errDiv = document.getElementById("reviewError");
+    errDiv.style.display = "none";
+    if (selectedRating === 0) {
+        errDiv.textContent = "Please select a rating.";
+        errDiv.style.display = "block";
+        return;
+    }
+    try {
+        await API.post("/api/reviews", { booking_id: bookingId, rating: selectedRating, comment: comment || null });
+        closeReviewModal();
+        loadMyBookings();
+    } catch (err) {
+        errDiv.textContent = err.message;
+        errDiv.style.display = "block";
+    }
+}
+
+async function openPropertyReviews(propertyId) {
+    try {
+        const reviews = await API.get(`/api/reviews/property/${propertyId}`);
+        const existing = document.getElementById("reviewModalOverlay");
+        if (existing) existing.remove();
+        const overlay = document.createElement("div");
+        overlay.id = "reviewModalOverlay";
+        overlay.className = "modal-overlay";
+        overlay.style.display = "flex";
+        let bodyHtml;
+        if (reviews.length === 0) {
+            bodyHtml = `<div class="empty-state">No reviews yet for this property.</div>`;
+        } else {
+            bodyHtml = reviews.map(r => `
+                <div style="border-bottom:1px solid var(--sand-deep);padding:14px 0;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                        <strong>${escapeHtml(r.customer_name || "Anonymous")}</strong>
+                        <span style="color:var(--lilac-deep);font-size:1rem;">${"★".repeat(r.rating)}${"☆".repeat(5 - r.rating)}</span>
+                    </div>
+                    ${r.comment ? `<p style="margin:6px 0;font-size:0.92rem;">${escapeHtml(r.comment)}</p>` : ""}
+                    <div style="font-size:0.78rem;color:var(--ink-faint);font-family:'Space Mono',monospace;">${new Date(r.created_at).toLocaleDateString()}</div>
+                    ${r.rep_response ? `<div style="margin-top:8px;padding:10px 14px;background:var(--sand);border-radius:var(--radius-sm);font-size:0.88rem;"><strong>Host response:</strong> ${escapeHtml(r.rep_response)}</div>` : ""}
+                </div>
+            `).join("");
+        }
+        overlay.innerHTML = `
+            <div class="modal" style="max-width:500px">
+                <span class="close-modal" onclick="closeReviewModal()">&times;</span>
+                <h3>Reviews</h3>
+                <div>${bodyHtml}</div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function viewPropertyReviews(propertyId) {
+    try {
+        const reviews = await API.get(`/api/reviews/property/${propertyId}`);
+        const existing = document.getElementById("reviewModalOverlay");
+        if (existing) existing.remove();
+        const overlay = document.createElement("div");
+        overlay.id = "reviewModalOverlay";
+        overlay.className = "modal-overlay";
+        overlay.style.display = "flex";
+        let bodyHtml;
+        if (reviews.length === 0) {
+            bodyHtml = `<div class="empty-state">No reviews yet for this property.</div>`;
+        } else {
+            bodyHtml = reviews.map(r => `
+                <div style="border-bottom:1px solid var(--sand-deep);padding:14px 0;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                        <strong>${escapeHtml(r.customer_name || "Anonymous")}</strong>
+                        <span style="color:var(--lilac-deep);font-size:1rem;">${"★".repeat(r.rating)}${"☆".repeat(5 - r.rating)}</span>
+                    </div>
+                    ${r.comment ? `<p style="margin:6px 0;font-size:0.92rem;">${escapeHtml(r.comment)}</p>` : ""}
+                    <div style="font-size:0.78rem;color:var(--ink-faint);font-family:'Space Mono',monospace;">${new Date(r.created_at).toLocaleDateString()}</div>
+                    ${r.rep_response ? `<div style="margin-top:8px;padding:10px 14px;background:var(--sand);border-radius:var(--radius-sm);font-size:0.88rem;"><strong>Your response:</strong> ${escapeHtml(r.rep_response)}</div>` : `
+                        <div style="margin-top:8px;">
+                            <textarea id="reviewResponse_${r.id}" rows="2" placeholder="Write a response..." style="width:100%;padding:8px 12px;border:2px solid var(--sand-deep);border-radius:var(--radius-sm);font-family:'Work Sans',sans-serif;font-size:0.85rem;resize:vertical;background:var(--paper);color:var(--ink);"></textarea>
+                            <button class="btn btn-primary btn-small" style="margin-top:6px;" onclick="submitReviewResponse('${r.id}')">Respond</button>
+                        </div>
+                    `}
+                </div>
+            `).join("");
+        }
+        overlay.innerHTML = `
+            <div class="modal" style="max-width:520px">
+                <span class="close-modal" onclick="closeReviewModal()">&times;</span>
+                <h3>Property Reviews</h3>
+                <div>${bodyHtml}</div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function submitReviewResponse(reviewId) {
+    const textarea = document.getElementById(`reviewResponse_${reviewId}`);
+    const response = textarea.value.trim();
+    if (!response) return;
+    try {
+        await API.post(`/api/reviews/${reviewId}/respond`, { response });
+        closeReviewModal();
+    } catch (err) {
+        alert(err.message);
+    }
 }
 
 // ==================== Nav (mobile toggle) ====================
@@ -223,6 +571,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const adminTabContent = document.getElementById("adminTabContent");
     if (adminTabContent) {
         initAdmin();
+    }
+
+    // Chat Enter key
+    const chatInput = document.getElementById("chatMessageInput");
+    if (chatInput) {
+        chatInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendChatMessage();
+            }
+        });
     }
 
     // Nav update
@@ -440,7 +799,7 @@ function renderSearchResults(properties) {
             <h4>${escapeHtml(p.name)}</h4>
             <div class="prop-type">${escapeHtml([p.city, p.district].filter(Boolean).join(", ") || "Location N/A")}${p.property_type ? " · " + escapeHtml(p.property_type) : ""}</div>
             ${p.description ? `<p>${escapeHtml(p.description.slice(0, 110))}${p.description.length > 110 ? "…" : ""}</p>` : ""}
-            <p style="font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--ink-soft); margin:10px 0 14px;">From ₹${p.from_price} total &middot; ${p.review_count} review${p.review_count === 1 ? "" : "s"}</p>
+            <p style="font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--ink-soft); margin:10px 0 14px;">From ₹${p.from_price} total &middot; <a href="#" onclick="event.preventDefault();openPropertyReviews('${p.id}')" style="color:var(--lilac-deep);">${p.review_count} review${p.review_count === 1 ? "" : "s"}</a></p>
             <div class="room-pick-list">
                 ${p.rooms.map(r => `
                     <div class="room-item">
@@ -454,6 +813,9 @@ function renderSearchResults(properties) {
                         <button class="btn btn-secondary btn-small" onclick="openBookingModal('${p.id}', '${r.id}')">Book — ₹${r.total_price}</button>
                     </div>
                 `).join("")}
+            </div>
+            <div class="prop-actions">
+                <button class="btn btn-secondary btn-small" onclick="contactHost('${p.id}')">Contact Host</button>
             </div>
         </div>
     `).join("") + `</div>`;
@@ -548,7 +910,7 @@ function renderMyBookings(bookings) {
                 <td>${b.num_adults} adult${b.num_adults === 1 ? "" : "s"}${b.num_children ? `, ${b.num_children} child${b.num_children === 1 ? "" : "ren"}` : ""}</td>
                 <td><span class="badge badge-${statusBadge[b.status] || "pending"}">${b.status}</span></td>
                 <td>${b.total_price != null ? "₹" + b.total_price : "—"}</td>
-                <td>${(b.status === "pending" || b.status === "confirmed") && new Date(b.check_in) > new Date() ? `<button class="btn btn-danger btn-small" onclick="cancelBooking('${b.id}')">Cancel</button>` : ""}</td>
+                <td>${(b.status === "pending" || b.status === "confirmed") && new Date(b.check_in) > new Date() ? `<button class="btn btn-danger btn-small" onclick="cancelBooking('${b.id}')">Cancel</button>` : b.status === "completed" ? `<button class="btn btn-primary btn-small" onclick="openReviewModal('${b.id}')">Write Review</button>` : ""}</td>
             </tr>
         `).join("")}
         </tbody>
@@ -597,6 +959,7 @@ async function renderHotelRepDashboard(container, user) {
                     <div class="prop-actions">
                         <button class="btn btn-secondary btn-small" onclick="viewProperty('${p.id}')">Manage Rooms</button>
                         <button class="btn btn-outline btn-small" onclick="editProperty('${p.id}')">Edit</button>
+                        <button class="btn btn-outline btn-small" onclick="viewPropertyReviews('${p.id}')">Reviews</button>
                     </div>
                 </div>
             `;

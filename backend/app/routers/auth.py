@@ -66,7 +66,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         secure=COOKIE_SECURE,
         samesite="lax",
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-        path="/api/auth/refresh",
+        path="/",
     )
 
 
@@ -265,7 +265,8 @@ def logout(response: Response, request: Request, db: Session = Depends(get_db)):
 
     db.commit()
     response.delete_cookie(key="access_token", path="/")
-    response.delete_cookie(key="refresh_token", path="/api/auth/refresh")
+    response.delete_cookie(key="refresh_token", path="/")
+    response.delete_cookie(key="refresh_token", path="/api/auth/refresh")  # cleanup legacy path
     return {"message": "Logged out"}
 
 

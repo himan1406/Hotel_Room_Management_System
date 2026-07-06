@@ -30,6 +30,10 @@
                 <a href="/login" id="navLogin">Login</a>
                 <a href="/signup" id="navSignup">Sign Up</a>
                 <a href="/hotel-setup" id="navHotelSetup">List a Hotel</a>
+                <button id="navMessages" style="display:none" class="msg-toggle-btn" onclick="toggleChatPanel()">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    <span id="msgBadge" class="msg-badge" style="display:none">0</span>
+                </button>
                 <a href="/dashboard" id="navDashboard" style="display:none">Dashboard</a>
                 <a href="/admin" id="navAdmin" style="display:none">Admin</a>
                 <a href="#" id="navLogout" style="display:none" onclick="logout()">Logout</a>
@@ -40,6 +44,28 @@
     <main class="container">
         {% block content %}{% endblock %}
     </main>
+
+    <div id="chatPanel" class="chat-panel" style="display:none">
+        <div class="chat-header">
+            <span>Messages</span>
+            <button class="chat-close" onclick="toggleChatPanel()">&times;</button>
+        </div>
+        <div class="chat-body" id="chatBody">
+            <div class="chat-conversations" id="chatConversations"></div>
+            <div class="chat-conversation-view" id="chatConversationView" style="display:none">
+                <div class="chat-view-header">
+                    <button class="chat-back-btn" onclick="showChatConversations()">&larr;</button>
+                    <span id="chatViewTitle">Chat</span>
+                </div>
+                <div class="chat-messages" id="chatMessages"></div>
+                <div class="chat-input-area">
+                    <textarea id="chatMessageInput" rows="1" placeholder="Type a message..."></textarea>
+                    <button class="btn btn-primary btn-small" onclick="sendChatMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/js/app.js"></script>
 </body>
 </html>

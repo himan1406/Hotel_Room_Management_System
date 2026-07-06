@@ -10,7 +10,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, aliased
 
 from app.database import get_db
-from app.models import Location, Property, Room
+from app.models import Location, Property, Room, User
 from app.availability import evaluate_room_for_dates
 
 router = APIRouter(prefix="/api/properties", tags=["properties"])
@@ -123,6 +123,8 @@ def get_property_public(property_id: uuid.UUID, db: Session = Depends(get_db)):
 
     rooms = db.query(Room).filter(Room.property_id == prop.id, Room.is_active == True).all()  # noqa: E712
 
+    rep = db.query(User).filter(User.id == prop.owner_rep_id).first()
+
     return {
         "id": str(prop.id),
         "name": prop.name,
@@ -134,6 +136,8 @@ def get_property_public(property_id: uuid.UUID, db: Session = Depends(get_db)):
         "amenities": prop.amenities or {},
         "avg_rating": prop.avg_rating,
         "review_count": prop.review_count,
+        "owner_rep_id": str(prop.owner_rep_id) if prop.owner_rep_id else None,
+        "owner_name": rep.full_name if rep else None,
         "rooms": [
             {
                 "id": str(r.id),
@@ -146,4 +150,23 @@ def get_property_public(property_id: uuid.UUID, db: Session = Depends(get_db)):
             }
             for r in rooms
         ],
+    }
+
+
+@router.get("/{property_id}/rep")
+def get_property_rep(property_id: uuid.UUID, db: Session = Depends(get_db)):
+    prop = db.query(Property).filter(
+        Property.id == property_id,
+        Property.is_approved == True,
+        Property.is_active == True,
+    ).first()
+    if not prop or not prop.owner_rep_id:
+        raise HTTPException(status_code=404, detail="Property not found")
+    rep = db.query(User).filter(User.id == prop.owner_rep_id).first()
+    if not rep:
+        raise HTTPException(status_code=404, detail="Property representative not found")
+    return {
+        "id": str(rep.id),
+        "full_name": rep.full_name or "Host",
+        "email": rep.email,
     }

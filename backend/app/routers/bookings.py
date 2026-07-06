@@ -129,6 +129,29 @@ def list_my_bookings(
     return [_serialize(b) for b in bookings]
 
 
+@router.post("/cancel-all")
+def cancel_all_bookings(
+    user: User = Depends(customer_required),
+    db: Session = Depends(get_db),
+):
+    bookings = (
+        db.query(Booking)
+        .filter(
+            Booking.customer_id == user.id,
+            Booking.status.in_([BookingStatus.pending, BookingStatus.confirmed]),
+            Booking.check_in >= date.today(),
+        )
+        .all()
+    )
+    count = len(bookings)
+    if count == 0:
+        raise HTTPException(status_code=400, detail="No active bookings to cancel")
+    for b in bookings:
+        b.status = BookingStatus.cancelled
+    db.commit()
+    return {"message": f"Cancelled {count} booking(s)"}
+
+
 @router.post("/{booking_id}/cancel")
 def cancel_booking(
     booking_id: uuid.UUID,
