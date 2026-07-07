@@ -7,37 +7,40 @@
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-    <!-- Reusable signature marks: sparkle (4-point star) + stamp (12-point scallop) -->
-    <svg style="display:none" aria-hidden="true">
-        <symbol id="icon-sparkle" viewBox="0 0 24 24">
-            <path d="M12 0 L14.5 9.5 L24 12 L14.5 14.5 L12 24 L9.5 14.5 L0 12 L9.5 9.5 Z" />
-        </symbol>
-        <symbol id="icon-stamp" viewBox="0 0 48 48">
-            <path d="M 46.0,24.0 L 41.39,28.66 L 43.05,35.0 L 36.73,36.73 L 35.0,43.05 L 28.66,41.39 L 24.0,46.0 L 19.34,41.39 L 13.0,43.05 L 11.27,36.73 L 4.95,35.0 L 6.61,28.66 L 2.0,24.0 L 6.61,19.34 L 4.95,13.0 L 11.27,11.27 L 13.0,4.95 L 19.34,6.61 L 24.0,2.0 L 28.66,6.61 L 35.0,4.95 L 36.73,11.27 L 43.05,13.0 L 41.39,19.34 Z" />
-        </symbol>
-    </svg>
-
     <nav class="navbar">
-        <div class="container">
-            <a href="/" class="nav-brand">Hotel<br>Room Management<br>System</a>
-
-            <button class="nav-toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="navLinks">
-                <svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="2.4" rx="1.2"/><rect x="2" y="11" width="20" height="2.4" rx="1.2"/><rect x="2" y="17" width="20" height="2.4" rx="1.2"/></svg>
-            </button>
+        <div class="container navbar-inner">
+            <a href="/" class="nav-brand">
+                <span class="nav-brand-mark">H</span>
+                <span class="nav-brand-text">Hotel<br>Room Management<br>System</span>
+            </a>
 
             <div class="nav-links" id="navLinks">
                 <a href="/">Home</a>
                 <a href="/login" id="navLogin">Login</a>
                 <a href="/signup" id="navSignup">Sign Up</a>
                 <a href="/hotel-setup" id="navHotelSetup">List a Hotel</a>
-                <button id="navMessages" style="display:none" class="msg-toggle-btn" onclick="toggleChatPanel()">
+                <a href="/dashboard" id="navDashboard" style="display:none">Dashboard</a>
+                <a href="/admin" id="navAdmin" style="display:none">Admin</a>
+            </div>
+
+            <div class="nav-actions">
+                <button id="navMessages" class="icon-btn" style="display:none" aria-label="Messages" onclick="toggleChatPanel()">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                     <span id="msgBadge" class="msg-badge" style="display:none">0</span>
                 </button>
-                <a href="/dashboard" id="navDashboard" style="display:none">Dashboard</a>
-                <a href="/admin" id="navAdmin" style="display:none">Admin</a>
-                <a href="#" id="navLogout" style="display:none" onclick="logout()">Logout</a>
-                <span id="navUser" class="nav-user" style="display:none"></span>
+
+                <div class="nav-account" id="navAccount" style="display:none">
+                    <button id="navAccountBtn" class="nav-account-btn" aria-haspopup="true" aria-expanded="false" onclick="toggleAccountMenu()">
+                        <span class="nav-account-avatar" id="navAccountAvatar"></span>
+                        <span id="navUserName" class="nav-account-name"></span>
+                        <svg class="nav-account-chevron" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="nav-account-menu" id="navAccountMenu"></div>
+                </div>
+
+                <button class="nav-toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="navLinks">
+                    <svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="2.4" rx="1.2"/><rect x="2" y="11" width="20" height="2.4" rx="1.2"/><rect x="2" y="17" width="20" height="2.4" rx="1.2"/></svg>
+                </button>
             </div>
         </div>
     </nav>

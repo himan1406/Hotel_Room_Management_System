@@ -1,33 +1,3 @@
-"""
-Availability engine — belongs at app/availability.py
-
-Single source of truth for "is this room bookable for these dates, and what
-does it cost", used by both the public search endpoint and booking creation
-so the two can never disagree with each other.
-
-IMPORTANT — this cooperates with DB triggers defined in the initial Alembic
-migration (001_initial_schema):
-  - `decrease_availability`: on a booking INSERT/UPDATE that lands on
-    status='confirmed', decrements `availability.quantity_available` for
-    every date in the stay — but only for rows that already exist.
-  - `restore_availability`: on 'confirmed' -> 'cancelled', increments it
-    back — again, only for rows that already exist.
-
-That means, for a given (room, date):
-  - If an `Availability` row exists, `quantity_available` is a LIVE counter
-    already net of every confirmed booking. We must trust it directly and
-    must NOT also count bookings against it — doing so double-subtracts the
-    same booking (once via the trigger, once via our own COUNT) and burns
-    through capacity roughly twice as fast as it should.
-  - If no row exists yet for that date, the trigger has nothing to update,
-    so there's no DB-level enforcement — we fall back to counting active
-    bookings against the room's default `total_quantity`.
-
-Performance note:
-  All DB I/O is done in at most 2 round-trips per call (one bulk
-  availability SELECT, one optional bulk booking COUNT) instead of the
-  previous one-query-per-night approach.
-"""
 
 from datetime import date, timedelta
 from typing import Dict
@@ -104,4 +74,4 @@ def evaluate_room_for_dates(db: Session, room: Room, check_in: date, check_out: 
 
         total_price += nightly_rate
 
-    return True, round(total_price, 2)
+    return True, round(total_price, 2)

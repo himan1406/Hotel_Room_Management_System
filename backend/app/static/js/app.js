@@ -92,37 +92,46 @@ function updateNav(user) {
     const signupLink = document.getElementById("navSignup");
     const dashLink = document.getElementById("navDashboard");
     const adminLink = document.getElementById("navAdmin");
-    const logoutLink = document.getElementById("navLogout");
-    const navUser = document.getElementById("navUser");
     const navMessages = document.getElementById("navMessages");
     const navHotelSetup = document.getElementById("navHotelSetup");
     const navbar = document.querySelector(".navbar");
+    const navAccount = document.getElementById("navAccount");
+    const navAccountAvatar = document.getElementById("navAccountAvatar");
+    const navUserName = document.getElementById("navUserName");
+    const navAccountMenu = document.getElementById("navAccountMenu");
 
     if (user) {
         loginLink.style.display = "none";
         signupLink.style.display = "none";
         dashLink.style.display = "inline";
-        logoutLink.style.display = "inline";
-        navUser.style.display = "inline";
-        navUser.textContent = `Hi, ${user.full_name || user.email}`;
-        if (user.role === "admin") {
-            adminLink.style.display = "inline";
-        } else {
-            adminLink.style.display = "none";
-        }
+        adminLink.style.display = user.role === "admin" ? "inline" : "none";
         navMessages.style.display = "inline-flex";
         navHotelSetup.style.display = "none";
         navbar.classList.add("navbar-compact");
+
+        if (navAccount) {
+            const displayName = user.full_name || user.email;
+            navAccount.style.display = "inline-flex";
+            navAccountAvatar.textContent = displayName.charAt(0).toUpperCase();
+            navUserName.textContent = displayName;
+
+            const menuItems = [];
+            if (user.role === "customer") {
+                menuItems.push(`<button type="button" onclick="openBookingsModal()">Past Bookings</button>`);
+            }
+            menuItems.push(`<a href="/dashboard">Dashboard</a>`);
+            menuItems.push(`<button type="button" class="nav-account-logout" onclick="logout()">Logout</button>`);
+            navAccountMenu.innerHTML = menuItems.join("");
+        }
     } else {
         loginLink.style.display = "inline";
         signupLink.style.display = "inline";
         dashLink.style.display = "none";
         adminLink.style.display = "none";
-        logoutLink.style.display = "none";
-        navUser.style.display = "none";
         navMessages.style.display = "none";
         navHotelSetup.style.display = "inline";
         navbar.classList.remove("navbar-compact");
+        if (navAccount) navAccount.style.display = "none";
     }
 }
 
@@ -358,7 +367,7 @@ async function openReviewModal(bookingId) {
             </div>
             <div class="form-group">
                 <label for="reviewComment">Comment (optional)</label>
-                <textarea id="reviewComment" rows="4" placeholder="Share your experience..." style="width:100%;padding:10px 14px;border:2px solid var(--sand-deep);border-radius:var(--radius-sm);font-family:'Work Sans',sans-serif;font-size:0.9rem;resize:vertical;background:var(--paper);color:var(--ink);"></textarea>
+                <textarea id="reviewComment" rows="4" placeholder="Share your experience..." style="width:100%;padding:10px 14px;border:2px solid var(--sand-deep);border-radius:var(--radius-sm);font-family:'Inter',sans-serif;font-size:0.9rem;resize:vertical;background:var(--paper);color:var(--ink);"></textarea>
             </div>
             <div id="reviewError" style="display:none;color:var(--bad);font-size:0.88rem;margin-bottom:12px;"></div>
             <div style="display:flex;gap:10px;justify-content:flex-end;">
@@ -475,7 +484,7 @@ async function viewPropertyReviews(propertyId) {
                     <div style="font-size:0.78rem;color:var(--ink-faint);font-family:'Space Mono',monospace;">${new Date(r.created_at).toLocaleDateString()}</div>
                     ${r.rep_response ? `<div style="margin-top:8px;padding:10px 14px;background:var(--sand);border-radius:var(--radius-sm);font-size:0.88rem;"><strong>Your response:</strong> ${escapeHtml(r.rep_response)}</div>` : `
                         <div style="margin-top:8px;">
-                            <textarea id="reviewResponse_${r.id}" rows="2" placeholder="Write a response..." style="width:100%;padding:8px 12px;border:2px solid var(--sand-deep);border-radius:var(--radius-sm);font-family:'Work Sans',sans-serif;font-size:0.85rem;resize:vertical;background:var(--paper);color:var(--ink);"></textarea>
+                            <textarea id="reviewResponse_${r.id}" rows="2" placeholder="Write a response..." style="width:100%;padding:8px 12px;border:2px solid var(--sand-deep);border-radius:var(--radius-sm);font-family:'Inter',sans-serif;font-size:0.85rem;resize:vertical;background:var(--paper);color:var(--ink);"></textarea>
                             <button class="btn btn-primary btn-small" style="margin-top:6px;" onclick="submitReviewResponse('${r.id}')">Respond</button>
                         </div>
                     `}
@@ -694,11 +703,6 @@ async function renderCustomerDashboard(container, user) {
         </div>
 
         <div id="searchResults"></div>
-
-        <div class="section-header" style="margin-top:44px">
-            <h3>My Bookings</h3>
-        </div>
-        <div id="myBookings"><div class="empty-state">Loading your bookings…</div></div>
     `;
 
     // Sensible defaults so the form is bookable with zero typing
@@ -731,7 +735,6 @@ async function renderCustomerDashboard(container, user) {
     });
 
     initSearchAutocomplete();
-    loadMyBookings();
 }
 
 function initSearchAutocomplete() {
@@ -994,19 +997,24 @@ function openBookingModal(propertyId, roomId) {
     });
 }
 
-async function loadMyBookings() {
-    const container = document.getElementById("myBookings");
+let _bookingsContainer = null;
+
+async function loadMyBookings(container) {
+    container = container || _bookingsContainer || document.getElementById("myBookings");
     if (!container) return;
+    _bookingsContainer = container;
+    container.innerHTML = `<div class="empty-state">Loading your bookings…</div>`;
     try {
         const bookings = await API.get("/api/bookings");
-        renderMyBookings(bookings);
+        renderMyBookings(bookings, container);
     } catch (err) {
         container.innerHTML = `<div class="empty-state">Couldn't load your bookings.</div>`;
     }
 }
 
-function renderMyBookings(bookings) {
-    const container = document.getElementById("myBookings");
+function renderMyBookings(bookings, container) {
+    container = container || _bookingsContainer || document.getElementById("myBookings");
+    if (!container) return;
     if (bookings.length === 0) {
         container.innerHTML = `<div class="empty-state">No bookings yet. Search above to plan your next stay.</div>`;
         return;
@@ -1040,6 +1048,38 @@ async function cancelBooking(bookingId) {
     } catch (err) {
         alert(err.message);
     }
+}
+
+// ==================== Account menu + Past Bookings modal ====================
+function toggleAccountMenu(forceClose) {
+    const menu = document.getElementById("navAccountMenu");
+    const btn = document.getElementById("navAccountBtn");
+    if (!menu || !btn) return;
+    const shouldOpen = forceClose === true ? false : !menu.classList.contains("open");
+    menu.classList.toggle("open", shouldOpen);
+    btn.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+}
+
+document.addEventListener("click", (e) => {
+    const account = document.getElementById("navAccount");
+    if (account && !account.contains(e.target)) {
+        toggleAccountMenu(true);
+    }
+});
+
+function openBookingsModal() {
+    toggleAccountMenu(true);
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay";
+    modal.innerHTML = `
+        <div class="modal modal-wide">
+            <button class="close-modal" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+            <h3>Past Bookings</h3>
+            <div id="pastBookingsList"><div class="empty-state">Loading your bookings…</div></div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    loadMyBookings(document.getElementById("pastBookingsList"));
 }
 
 async function renderHotelRepDashboard(container, user) {
@@ -1744,14 +1784,8 @@ async function renderPropertiesTab() {
             wrap.innerHTML = `<div class="empty-state">No properties match those filters.</div>`;
             return;
         }
-        wrap.innerHTML = `<div class="table-container"><table>
-            <thead><tr>
-                <th>Name</th><th>Type</th><th>Owner</th><th>City</th><th>Address</th><th>Status</th><th>Actions</th>
-            </tr></thead>
-            <tbody>
-        `;
-        for (const p of props) {
-            wrap.innerHTML += `<tr>
+        const rows = props.map(p => `
+            <tr>
                 <td><strong>${escapeHtml(p.name)}</strong></td>
                 <td>${escapeHtml(p.property_type || "—")}</td>
                 <td>${escapeHtml(p.owner_name || "—")}<br><small style="color:var(--ink-faint)">${escapeHtml(p.owner_email || "")}</small></td>
@@ -1764,9 +1798,15 @@ async function renderPropertiesTab() {
                         : `<button class="btn btn-success btn-small" onclick="approveProperty('${p.id}','${escapeHtml(p.name)}')">Approve</button>`
                     }
                 </td>
-            </tr>`;
-        }
-        wrap.innerHTML += `</tbody></table></div>`;
+            </tr>
+        `).join("");
+
+        wrap.innerHTML = `<div class="table-container"><table>
+            <thead><tr>
+                <th>Name</th><th>Type</th><th>Owner</th><th>City</th><th>Address</th><th>Status</th><th>Actions</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>`;
     } catch (err) {
         wrap.innerHTML = `<div class="empty-state" style="color:var(--bad)">${escapeHtml(err.message)}</div>`;
     }
