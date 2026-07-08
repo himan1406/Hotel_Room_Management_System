@@ -4,13 +4,16 @@ import base64
 
 from datetime import date as date_type
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Property, Room, User, UserRole, Location, LocationType, Booking, BookingStatus, Availability
+from app.models import Property, Room, User, UserRole, Location, LocationType, Booking, BookingStatus, Availability, PropertyDocument, DocumentChunk, DocType
 from app.routers.auth import get_current_user, require_role
+from app.routers.rag import _chunk_text
 from app.schemas import PropertyCreate, PropertyResponse, RoomCreate, RoomResponse
+from app.extract_text import extract_text_from_bytes
+from app.embeddings import embed_texts
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -460,6 +463,147 @@ async def upload_room_images(
     room.images = list(room.images or []) + urls
     db.commit()
     return {"images": room.images}
+
+
+# ── Document management ─────────────────────────────────────────────────
+
+
+@router.post("/{property_id}/documents")
+async def upload_property_document(
+    property_id: uuid.UUID,
+    title: str = Form(..., min_length=1, max_length=255),
+    doc_type: str = Form("other"),
+    summary: str = Form(""),
+    file: UploadFile = File(...),
+    user: User = Depends(hotel_rep),
+    db: Session = Depends(get_db),
+):
+    prop = db.query(Property).filter(
+        Property.id == property_id,
+        Property.owner_rep_id == user.id,
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    ALLOWED_DOC_TYPES = {"cancellation_policy", "house_rules", "local_guide", "other"}
+    if doc_type not in ALLOWED_DOC_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid doc_type. Allowed: {', '.join(sorted(ALLOWED_DOC_TYPES))}")
+
+    # ── File validation ─────────────────────────────────────────────────
+    content = await file.read()
+    if len(content) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="File too large. Max 5 MB.")
+    raw_ext = os.path.splitext(file.filename or "")[1].lower()
+    ALLOWED_DOC_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".txt", ".doc", ".docx"}
+    if raw_ext not in ALLOWED_DOC_EXTENSIONS:
+        raise HTTPException(status_code=415, detail=f"Unsupported format '{raw_ext}'.")
+
+    # ── Persist as base64 ───────────────────────────────────────────────
+    mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                "pdf": "application/pdf", "txt": "text/plain",
+                "doc": "application/msword", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+    mime = mime_map.get(raw_ext.lstrip("."), "application/octet-stream")
+    b64 = base64.b64encode(content).decode("ascii")
+    file_url = f"data:{mime};base64,{b64}"
+
+    extracted = extract_text_from_bytes(content, file.filename or "")
+    if summary and extracted:
+        full_text = summary + "\n\n---\n\n" + extracted
+    elif extracted:
+        full_text = extracted
+    else:
+        full_text = summary or ""
+
+    doc = PropertyDocument(
+        property_id=property_id,
+        uploaded_by=user.id,
+        doc_type=DocType(doc_type),
+        title=title,
+        file_url=file_url,
+        summary_text=full_text,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+
+    # ── Auto-index into RAG ─────────────────────────────────────────────────
+    chunks = _chunk_text(full_text)
+    if chunks:
+        embeddings = embed_texts(chunks)
+        for i, (chunk_text, emb) in enumerate(zip(chunks, embeddings)):
+            db.add(DocumentChunk(
+                document_id=doc.id,
+                property_id=property_id,
+                chunk_index=i,
+                content=chunk_text,
+                embedding=emb,
+            ))
+        db.commit()
+
+    return {
+        "id": str(doc.id),
+        "title": doc.title,
+        "doc_type": doc.doc_type.value,
+        "summary_text": doc.summary_text,
+        "chunk_count": len(chunks),
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+    }
+
+
+@router.get("/{property_id}/documents")
+def list_property_documents(
+    property_id: uuid.UUID,
+    user: User = Depends(hotel_rep),
+    db: Session = Depends(get_db),
+):
+    prop = db.query(Property).filter(
+        Property.id == property_id,
+        Property.owner_rep_id == user.id,
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    docs = db.query(PropertyDocument).filter(
+        PropertyDocument.property_id == property_id,
+    ).order_by(PropertyDocument.created_at.desc()).all()
+
+    return [
+        {
+            "id": str(d.id),
+            "title": d.title,
+            "doc_type": d.doc_type.value if d.doc_type else "other",
+            "file_url": d.file_url,
+            "summary_text": d.summary_text,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        }
+        for d in docs
+    ]
+
+
+@router.delete("/{property_id}/documents/{document_id}")
+def delete_property_document(
+    property_id: uuid.UUID,
+    document_id: uuid.UUID,
+    user: User = Depends(hotel_rep),
+    db: Session = Depends(get_db),
+):
+    prop = db.query(Property).filter(
+        Property.id == property_id,
+        Property.owner_rep_id == user.id,
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    doc = db.query(PropertyDocument).filter(
+        PropertyDocument.id == document_id,
+        PropertyDocument.property_id == property_id,
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    db.delete(doc)
+    db.commit()
+    return {"message": "Document deleted"}
 
 
 @router.delete("/{property_id}/rooms/{room_id}/images/{image_index}")

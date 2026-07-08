@@ -8,6 +8,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector
 
 from app.database import Base
 
@@ -30,6 +31,8 @@ class PropertyType(str, enum.Enum):
     villa = "villa"
     homestay = "homestay"
     resort = "resort"
+    heritage = "heritage"
+    hostel = "hostel"
 
 
 class BookingStatus(str, enum.Enum):
@@ -42,6 +45,7 @@ class BookingStatus(str, enum.Enum):
 class DocType(str, enum.Enum):
     cancellation_policy = "cancellation_policy"
     house_rules = "house_rules"
+    transportation = "transportation"
     local_guide = "local_guide"
     other = "other"
 
@@ -99,6 +103,7 @@ class RefreshToken(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     token_hash = Column(String(255), unique=True, nullable=False)
     expires_at = Column(DateTime, nullable=False)
+    is_used = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
     user = relationship("User")
@@ -213,10 +218,22 @@ class PropertyDocument(Base):
     uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     doc_type = Column(Enum(DocType), default=DocType.other)
     title = Column(String(255))
-    file_url = Column(String(500))
+    file_url = Column(Text)
     summary_text = Column(Text)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("property_documents.id", ondelete="CASCADE"), nullable=False)
+    property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    embedding = Column(Vector(384))
+    created_at = Column(DateTime, server_default=func.now())
 
 
 class Review(Base):
@@ -247,3 +264,29 @@ class Message(Base):
 
     sender = relationship("User", foreign_keys=[sender_id])
     receiver = relationship("User", foreign_keys=[receiver_id])
+
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    guest_id = Column(String(64), nullable=True)
+    title = Column(String(255), default="New conversation")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    messages = relationship("ChatMessage", back_populates="session", order_by="ChatMessage.created_at")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(16), nullable=False)
+    content = Column(Text, nullable=False)
+    sources = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    session = relationship("ChatSession", back_populates="messages")

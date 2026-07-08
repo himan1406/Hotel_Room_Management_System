@@ -1,6 +1,7 @@
 import secrets
 import hashlib
 import hmac
+import uuid
 import bcrypt
 from datetime import datetime, timedelta, timezone
 
@@ -91,12 +92,29 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
+def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -> User | None:
+    try:
+        return get_current_user(request, db)
+    except HTTPException:
+        return None
+
+
 def require_role(role: UserRole):
     def checker(user: User = Depends(get_current_user)) -> User:
         if user.role != role:
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         return user
     return checker
+
+
+# ──────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────
+
+def _revoke_all_user_sessions(user_id: uuid.UUID, db: Session) -> None:
+    """Delete every access session + refresh token for the given user."""
+    db.query(SessionModel).filter(SessionModel.user_id == user_id).delete()
+    db.query(RefreshToken).filter(RefreshToken.user_id == user_id).delete()
 
 
 # ──────────────────────────────────────────────
@@ -192,8 +210,13 @@ def login(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
 def refresh(request: Request, response: Response, db: Session = Depends(get_db)):
     """
     Exchange a valid refresh token cookie for a new access token + refresh token pair.
-    The old refresh token is revoked (rotation) to detect token theft.
-    Called automatically by the frontend when a 401 is received.
+
+    Rotation + reuse detection:
+      1. Mark the presented refresh token as *used* instead of deleting it.
+      2. If the same token is presented a second time it's already marked used
+         → that signals token theft → revoke EVERY session for that user.
+      3. On normal rotation, only the current access session is replaced so
+         other devices stay logged in.
     """
     token = request.cookies.get("refresh_token")
     if not token:
@@ -202,21 +225,40 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
     token_hash = hash_token(token)
     rt = db.query(RefreshToken).filter(
         RefreshToken.token_hash == token_hash,
-        RefreshToken.expires_at > datetime.now(timezone.utc)
     ).first()
+
+    # ── Token not found at all ────────────────────────────────────────────────
     if not rt:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
     user = db.query(User).filter(User.id == rt.user_id).first()
+
+    # ── Reuse detection ──────────────────────────────────────────────────────
+    if rt.is_used:
+        # The same token has already been rotated once → someone else (or a
+        # replay attack) is presenting a consumed token.  Nuke everything so
+        # the real owner has to log in again with their password.
+        if user:
+            _revoke_all_user_sessions(user.id, db)
+            db.commit()
+        # Wipe cookies on the response so the attacker's browser is cleaned up too.
+        response.delete_cookie(key="access_token", path="/")
+        response.delete_cookie(key="refresh_token", path="/")
+        raise HTTPException(status_code=401, detail="Token reuse detected — all sessions revoked. Please log in again.")
+
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
+    # ── Token expired ─────────────────────────────────────────────────────────
+    if rt.expires_at <= datetime.now(timezone.utc):
+        db.delete(rt)
+        db.commit()
+        raise HTTPException(status_code=401, detail="Refresh token expired")
+
     # ── Rotate refresh token ───────────────────────────────────────────────────
-    # Revoke the consumed refresh token immediately so it can't be reused.
-    # If we detect the old token being presented again after rotation it means
-    # it was stolen — the right response there is to revoke all sessions (not
-    # implemented here but easy to add as a follow-up).
-    db.delete(rt)
+    # Mark the current token as used so a second presentation triggers theft
+    # detection, then issue a brand-new refresh token.
+    rt.is_used = True
 
     new_refresh_token = generate_token()
     new_rt = RefreshToken(

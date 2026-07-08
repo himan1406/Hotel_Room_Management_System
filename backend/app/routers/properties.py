@@ -10,7 +10,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, aliased
 
 from app.database import get_db
-from app.models import Location, Property, Room, User
+from app.models import Location, Property, Room, User, PropertyDocument
 from app.availability import evaluate_room_for_dates
 
 router = APIRouter(prefix="/api/properties", tags=["properties"])
@@ -23,6 +23,12 @@ def search_properties(
     check_out: date | None = Query(None),
     adults: int = Query(1, ge=1),
     children: int = Query(0, ge=0),
+    property_type: str | None = Query(None, regex="^(hotel|villa|homestay|resort)$"),
+    amenities: list[str] = Query([], description="Required amenities (e.g. wifi, pool)"),
+    min_price: float | None = Query(None, ge=0, description="Minimum room price per night"),
+    max_price: float | None = Query(None, ge=0, description="Maximum room price per night"),
+    min_rating: float | None = Query(None, ge=0, le=5, description="Minimum average rating"),
+    sort_by: str = Query("trending", regex="^(trending|price_asc|price_desc|rating_desc)$"),
     skip: int = Query(0, ge=0, description="Number of results to skip (for pagination)"),
     limit: int = Query(20, ge=1, le=100, description="Maximum number of results to return"),
     db: Session = Depends(get_db),
@@ -54,7 +60,36 @@ def search_properties(
             district.name.ilike(like),
         ))
 
-    properties = q.order_by(Property.trending_score.desc()).all()
+    if property_type:
+        q = q.filter(Property.property_type == property_type)
+
+    if amenities:
+        for amenity in amenities:
+            q = q.filter(Property.amenities[amenity].astext == "true")
+
+    if min_rating is not None:
+        q = q.filter(Property.avg_rating >= min_rating)
+
+    if min_price is not None or max_price is not None:
+        room_subq = db.query(Room.property_id).filter(Room.is_active == True)
+        if min_price is not None:
+            room_subq = room_subq.filter(Room.base_price >= min_price)
+        if max_price is not None:
+            room_subq = room_subq.filter(Room.base_price <= max_price)
+        q = q.filter(Property.id.in_(room_subq.subquery()))
+
+    if sort_by == "rating_desc":
+        q = q.order_by(Property.avg_rating.desc())
+    elif sort_by == "trending":
+        q = q.order_by(Property.trending_score.desc())
+
+    properties = q.all()
+
+    if sort_by == "price_asc" or sort_by == "price_desc":
+        def min_room_price(pid):
+            rooms = db.query(Room).filter(Room.property_id == pid, Room.is_active == True).all()
+            return min((r.base_price for r in rooms), default=0)
+        properties.sort(key=lambda p: min_room_price(p.id), reverse=(sort_by == "price_desc"))
 
     results = []
     for prop in properties:
@@ -92,7 +127,7 @@ def search_properties(
 
         matching_rooms.sort(key=lambda r: r["total_price"])
 
-        # ── Thumbnail & photo count ────────────────────────────────────────
+        # â”€â”€ Thumbnail & photo count â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # Prefer a property-level photo (uploaded by the rep for the property
         # as a whole) and only fall back to a room photo if the property has
         # none. photo_count lets the UI show "12 photos" on the card so
@@ -183,3 +218,32 @@ def get_property_rep(property_id: uuid.UUID, db: Session = Depends(get_db)):
         "full_name": rep.full_name or "Host",
         "email": rep.email,
     }
+
+
+@router.get("/{property_id}/documents")
+def list_property_documents_public(property_id: uuid.UUID, db: Session = Depends(get_db)):
+    prop = db.query(Property).filter(
+        Property.id == property_id,
+        Property.is_approved == True,
+        Property.is_active == True,
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    docs = db.query(PropertyDocument).filter(
+        PropertyDocument.property_id == property_id,
+    ).order_by(PropertyDocument.created_at.desc()).all()
+
+    return [
+        {
+            "id": str(d.id),
+            "title": d.title,
+            "doc_type": d.doc_type.value if d.doc_type else "other",
+            "summary_text": d.summary_text,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        }
+        for d in docs
+    ]
+
+
+

@@ -129,6 +129,11 @@ class ReviewCreate(BaseModel):
     comment: Optional[str] = None
 
 
+class ReviewUpdate(BaseModel):
+    rating: int = Field(..., ge=1, le=5)
+    comment: Optional[str] = None
+
+
 class ReviewRespond(BaseModel):
     response: str
 
@@ -144,6 +149,7 @@ class ReviewResponse(BaseModel):
     rep_response: Optional[str] = None
     responded_at: Optional[datetime] = None
     created_at: datetime
+    is_mine: bool = False
 
     class Config:
         from_attributes = True

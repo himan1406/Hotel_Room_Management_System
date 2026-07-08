@@ -1,4 +1,4 @@
-// ==================== API Layer ====================
+﻿// ==================== API Layer ====================
 const API = {
     _refreshing: null,   // deduplicate concurrent refresh calls
 
@@ -13,7 +13,7 @@ const API = {
         }
         const res = await fetch(path, opts);
 
-        // Auto-refresh on 401 — but NEVER for auth endpoints (they handle their own 401s)
+        // Auto-refresh on 401 â€” but NEVER for auth endpoints (they handle their own 401s)
         if (res.status === 401 && !_isRetry && !path.startsWith("/api/auth/")) {
             const refreshed = await API._tryRefresh();
             if (refreshed) {
@@ -168,20 +168,26 @@ async function loadConversations() {
     const container = document.getElementById("chatConversations");
     try {
         const convos = await API.get("/api/messages/conversations");
-        if (convos.length === 0) {
-            container.innerHTML = `<div class="empty-state" style="padding:20px;text-align:center;">No conversations yet.</div>`;
-            return;
-        }
-        container.innerHTML = convos.map(c => `
-            <div class="chat-conv-item" onclick="openConversation('${c.other_user_id}', '${c.property_id || ''}', '${escapeHtml(c.property_name)}', '${escapeHtml(c.other_user_name)}')">
-                <div class="chat-conv-avatar">${escapeHtml(c.other_user_name.charAt(0).toUpperCase())}</div>
+        convos.unshift({
+            other_user_id: "ai-frontdesk",
+            other_user_name: "Front Desk AI",
+            property_id: null,
+            property_name: "AI Assistant",
+            last_message: "Ask me about properties, policies, and local attractions!",
+            unread_count: 0,
+        });
+        container.innerHTML = convos.map(c => {
+            const isAi = c.other_user_id === "ai-frontdesk";
+            return `
+            <div class="chat-conv-item" onclick="openConversation('${isAi ? 'ai-frontdesk' : c.other_user_id}', '${isAi ? '' : c.property_id || ''}', '${escapeHtml(c.property_name)}', '${escapeHtml(c.other_user_name)}')">
+                <div class="chat-conv-avatar ${isAi ? 'ai-avatar' : ''}">${isAi ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' : escapeHtml(c.other_user_name.charAt(0).toUpperCase())}</div>
                 <div class="chat-conv-info">
                     <div class="chat-conv-name">${escapeHtml(c.other_user_name)}</div>
-                    <div class="chat-conv-preview">${escapeHtml(c.property_name)} — ${escapeHtml(c.last_message)}</div>
+                    <div class="chat-conv-preview">${escapeHtml(c.property_name)} ${c.property_name ? '—' : ''} ${escapeHtml(c.last_message)}</div>
                 </div>
                 ${c.unread_count > 0 ? `<span class="chat-conv-badge">${c.unread_count}</span>` : ""}
-            </div>
-        `).join("");
+            </div>`;
+        }).join("");
         updateMsgBadge(convos);
     } catch {
         container.innerHTML = `<div class="empty-state" style="padding:20px;text-align:center;">Could not load conversations.</div>`;
@@ -200,11 +206,15 @@ function updateMsgBadge(convos) {
 }
 
 async function openConversation(otherUserId, propertyId, propertyName, otherName) {
+    if (otherUserId === "ai-frontdesk") {
+        if (typeof openAIChat === "function") openAIChat();
+        return;
+    }
     msgCurrentOtherId = otherUserId;
     msgCurrentPropertyId = propertyId || null;
     document.getElementById("chatConversations").style.display = "none";
     document.getElementById("chatConversationView").style.display = "flex";
-    const title = propertyName ? `Re: ${propertyName} — ${otherName}` : otherName;
+    const title = propertyName ? `Re: ${propertyName} â€” ${otherName}` : otherName;
     document.getElementById("chatViewTitle").textContent = title;
     await loadMessages(otherUserId, propertyId);
 }
@@ -443,7 +453,15 @@ async function openPropertyReviews(propertyId) {
                         <span style="color:var(--lilac-deep);font-size:1rem;">${"★".repeat(r.rating)}${"☆".repeat(5 - r.rating)}</span>
                     </div>
                     ${r.comment ? `<p style="margin:6px 0;font-size:0.92rem;">${escapeHtml(r.comment)}</p>` : ""}
-                    <div style="font-size:0.78rem;color:var(--ink-faint);font-family:'Space Mono',monospace;">${new Date(r.created_at).toLocaleDateString()}</div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.78rem;color:var(--ink-faint);font-family:'Space Mono',monospace;margin-top:6px;">
+                        <span>${new Date(r.created_at).toLocaleDateString()}</span>
+                        ${r.is_mine ? `
+                            <div style="display:flex;gap:6px;">
+                                <button class="btn btn-outline btn-small" style="font-size:0.72rem;padding:2px 8px;" onclick="openEditReviewModal('${r.id}', ${r.rating})">Edit</button>
+                                <button class="btn btn-danger btn-small" style="font-size:0.72rem;padding:2px 8px;" onclick="deleteReview('${r.id}', '${propertyId}')">Delete</button>
+                            </div>
+                        ` : ""}
+                    </div>
                     ${r.rep_response ? `<div style="margin-top:8px;padding:10px 14px;background:var(--sand);border-radius:var(--radius-sm);font-size:0.88rem;"><strong>Host response:</strong> ${escapeHtml(r.rep_response)}</div>` : ""}
                 </div>
             `).join("");
@@ -456,6 +474,80 @@ async function openPropertyReviews(propertyId) {
             </div>
         `;
         document.body.appendChild(overlay);
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+let selectedEditRating = 0;
+
+async function openEditReviewModal(reviewId, currentRating) {
+    selectedEditRating = currentRating || 0;
+    const existing = document.getElementById("reviewModalOverlay");
+    if (existing) existing.remove();
+    const overlay = document.createElement("div");
+    overlay.id = "reviewModalOverlay";
+    overlay.className = "modal-overlay";
+    overlay.style.display = "flex";
+    overlay.innerHTML = `
+        <div class="modal" style="max-width:440px">
+            <span class="close-modal" onclick="closeReviewModal()">&times;</span>
+            <h3>Edit Review</h3>
+            <input type="hidden" id="editReviewId" value="${reviewId}">
+            <div class="form-group">
+                <label>Rating</label>
+                <div style="font-size:1.6rem;cursor:pointer;color:var(--sand-deep);" id="editStarContainer">
+                    ${[1,2,3,4,5].map(i => `<span class="edit-star" data-value="${i}" style="color:${i <= selectedEditRating ? 'var(--lilac-deep)' : 'var(--sand-deep)'};transition:color var(--fast) var(--ease);">&#9733;</span>`).join("")}
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="editReviewComment">Comment (optional)</label>
+                <textarea id="editReviewComment" rows="4" placeholder="Share your experience..." style="width:100%;padding:10px 14px;border:2px solid var(--sand-deep);border-radius:var(--radius-sm);font-family:'Inter',sans-serif;font-size:0.9rem;resize:vertical;background:var(--paper);color:var(--ink);"></textarea>
+            </div>
+            <div id="editReviewError" style="display:none;color:var(--bad);font-size:0.88rem;margin-bottom:12px;"></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button class="btn btn-secondary" onclick="closeReviewModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="submitEditReview()">Update Review</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Star hover/click handlers
+    const container = document.getElementById("editStarContainer");
+    const stars = container.querySelectorAll(".edit-star");
+    function highlightUpTo(val) {
+        stars.forEach(s => {
+            s.style.color = parseInt(s.dataset.value) <= val ? "var(--lilac-deep)" : "var(--sand-deep)";
+        });
+    }
+    stars.forEach(s => {
+        s.addEventListener("mouseenter", () => highlightUpTo(parseInt(s.dataset.value)));
+        s.addEventListener("mouseleave", () => highlightUpTo(selectedEditRating));
+        s.addEventListener("click", () => { selectedEditRating = parseInt(s.dataset.value); highlightUpTo(selectedEditRating); });
+    });
+}
+
+async function submitEditReview() {
+    const reviewId = document.getElementById("editReviewId").value;
+    const comment = document.getElementById("editReviewComment").value.trim();
+    const errDiv = document.getElementById("editReviewError");
+    errDiv.style.display = "none";
+    if (selectedEditRating === 0) { errDiv.textContent = "Please select a rating."; errDiv.style.display = "block"; return; }
+    try {
+        await API.put(`/api/reviews/${reviewId}`, { rating: selectedEditRating, comment: comment || null });
+        closeReviewModal();
+    } catch (err) {
+        errDiv.textContent = err.message;
+        errDiv.style.display = "block";
+    }
+}
+
+async function deleteReview(reviewId, propertyId) {
+    if (!confirm("Delete this review?")) return;
+    try {
+        await API.del(`/api/reviews/${reviewId}`);
+        openPropertyReviews(propertyId);
     } catch (err) {
         alert(err.message);
     }
@@ -702,6 +794,56 @@ async function renderCustomerDashboard(container, user) {
             <div id="searchError" class="error-msg"></div>
         </div>
 
+        <div class="card filter-panel" id="filterPanel" style="margin-top:16px; display:none;">
+            <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+                <div class="form-group" style="flex:1; min-width:200px;">
+                    <label for="filterPriceRange">Max price per night: &#8377;<span id="filterPriceLabel">5000</span></label>
+                    <input type="range" id="filterPriceRange" min="0" max="20000" step="500" value="5000" style="width:100%;">
+                </div>
+                <div class="form-group" style="min-width:150px;">
+                    <label for="filterMinRating">Min rating</label>
+                    <select id="filterMinRating">
+                        <option value="">Any</option>
+                        <option value="1">1+</option>
+                        <option value="2">2+</option>
+                        <option value="3">3+</option>
+                        <option value="4">4+</option>
+                        <option value="4.5">4.5+</option>
+                    </select>
+                </div>
+                <div class="form-group" style="min-width:130px;">
+                    <label for="filterPropertyType">Property type</label>
+                    <select id="filterPropertyType">
+                        <option value="">All types</option>
+                        <option value="hotel">Hotel</option>
+                        <option value="villa">Villa</option>
+                        <option value="homestay">Homestay</option>
+                        <option value="resort">Resort</option>
+                    </select>
+                </div>
+                <div class="form-group" style="min-width:120px;">
+                    <label for="filterSortBy">Sort by</label>
+                    <select id="filterSortBy">
+                        <option value="trending">Trending</option>
+                        <option value="price_asc">Price: Low to High</option>
+                        <option value="price_desc">Price: High to Low</option>
+                        <option value="rating_desc">Rating: High to Low</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary btn-small" onclick="applyFilters()" style="margin-top:18px;">Apply Filters</button>
+                <button class="btn btn-outline btn-small" onclick="resetFilters()" style="margin-top:18px;">Reset</button>
+            </div>
+            <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:10px;">
+                <label class="amenity-checkbox-label"><input type="checkbox" name="filterAmenity" value="wifi"> WiFi</label>
+                <label class="amenity-checkbox-label"><input type="checkbox" name="filterAmenity" value="parking"> Parking</label>
+                <label class="amenity-checkbox-label"><input type="checkbox" name="filterAmenity" value="pool"> Pool</label>
+                <label class="amenity-checkbox-label"><input type="checkbox" name="filterAmenity" value="ac"> A/C</label>
+                <label class="amenity-checkbox-label"><input type="checkbox" name="filterAmenity" value="gym"> Gym</label>
+                <label class="amenity-checkbox-label"><input type="checkbox" name="filterAmenity" value="restaurant"> Restaurant</label>
+                <label class="amenity-checkbox-label"><input type="checkbox" name="filterAmenity" value="spa"> Spa</label>
+            </div>
+        </div>
+
         <div id="searchResults"></div>
     `;
 
@@ -732,6 +874,10 @@ async function renderCustomerDashboard(container, user) {
     document.getElementById("searchForm").addEventListener("submit", (e) => {
         e.preventDefault();
         runPropertySearch();
+    });
+
+    document.getElementById("filterPriceRange").addEventListener("input", () => {
+        document.getElementById("filterPriceLabel").textContent = document.getElementById("filterPriceRange").value;
     });
 
     initSearchAutocomplete();
@@ -817,7 +963,27 @@ async function runPropertySearch() {
     const location = document.getElementById("searchLocation").value.trim();
     if (location) params.set("location", location);
 
+    // Filters
+    const maxPrice = document.getElementById("filterPriceRange").value;
+    if (maxPrice && maxPrice !== "5000") params.set("max_price", maxPrice);
+
+    const minRating = document.getElementById("filterMinRating").value;
+    if (minRating) params.set("min_rating", minRating);
+
+    const propType = document.getElementById("filterPropertyType").value;
+    if (propType) params.set("property_type", propType);
+
+    const sortBy = document.getElementById("filterSortBy").value;
+    if (sortBy && sortBy !== "trending") params.set("sort_by", sortBy);
+
+    const amenityCbs = document.querySelectorAll('input[name="filterAmenity"]:checked');
+    amenityCbs.forEach(cb => params.append("amenities", cb.value));
+
     resultsDiv.innerHTML = `<div class="empty-state">Searching…</div>`;
+
+    // Show filter panel on first search
+    document.getElementById("filterPanel").style.display = "block";
+
     try {
         const properties = await API.get(`/api/properties/search?${params.toString()}`);
         lastSearchResults = properties;
@@ -827,6 +993,18 @@ async function runPropertySearch() {
         errDiv.textContent = err.message;
         resultsDiv.innerHTML = "";
     }
+}
+function applyFilters() {
+    if (lastSearchResults.length > 0) runPropertySearch();
+}
+
+function resetFilters() {
+    document.getElementById("filterPriceRange").value = "5000";
+    document.getElementById("filterPriceLabel").textContent = "5000";
+    document.getElementById("filterMinRating").value = "";
+    document.getElementById("filterPropertyType").value = "";
+    document.getElementById("filterSortBy").value = "trending";
+    document.querySelectorAll('input[name="filterAmenity"]').forEach(cb => cb.checked = false);
 }
 
 function renderSearchResults(properties) {
@@ -842,7 +1020,7 @@ function renderSearchResults(properties) {
                 ${p.thumbnail
                     ? `<img src="${escapeHtml(p.thumbnail)}" alt="${escapeHtml(p.name)}">`
                     : `<div class="thumb-placeholder">No photos yet</div>`}
-                ${p.photo_count ? `<span class="photo-count-badge">🖼 ${p.photo_count}</span>` : ""}
+                ${p.photo_count ? `<span class="photo-count-badge">📷 ${p.photo_count}</span>` : ""}
             </div>
             <h4>${escapeHtml(p.name)}</h4>
             <div class="prop-type">${escapeHtml([p.city, p.district].filter(Boolean).join(", ") || "Location N/A")}${p.property_type ? " · " + escapeHtml(p.property_type) : ""}</div>
@@ -854,7 +1032,7 @@ function renderSearchResults(properties) {
                         <div class="room-item-header">
                             ${r.images && r.images.length > 0
                                 ? `<div class="room-item-thumb" onclick="openPropertyGallery('${p.id}', '${r.id}')" title="View photos"><img src="${escapeHtml(r.images[0])}" alt="${escapeHtml(r.room_type)}"></div>`
-                                : `<div class="room-item-thumb placeholder">🛏</div>`}
+                                : `<div class="room-item-thumb placeholder">ðŸ›</div>`}
                             <div style="flex:1">
                                 <h5 style="margin-bottom:2px">${escapeHtml(r.room_type)}</h5>
                                 <div class="room-details" style="margin-bottom:0">
@@ -865,7 +1043,7 @@ function renderSearchResults(properties) {
                                 </div>
                             </div>
                         </div>
-                        <button class="btn btn-secondary btn-small" onclick="openBookingModal('${p.id}', '${r.id}')">Book — ₹${r.total_price}</button>
+                        <button class="btn btn-secondary btn-small" onclick="openBookingModal('${p.id}', '${r.id}')">Book at ₹${r.total_price}</button>
                     </div>
                 `).join("")}
             </div>
@@ -888,7 +1066,7 @@ async function openPropertyGallery(propertyId, focusRoomId) {
         <div class="modal">
             <button class="close-modal" onclick="this.closest('.modal-overlay').remove()">&times;</button>
             <h3>Photos</h3>
-            <div id="galleryBody"><div class="gallery-empty">Loading photos…</div></div>
+            <div id="galleryBody"><div class="gallery-empty">Loading photosâ€¦</div></div>
         </div>
     `;
     document.body.appendChild(modal);
@@ -1003,7 +1181,7 @@ async function loadMyBookings(container) {
     container = container || _bookingsContainer || document.getElementById("myBookings");
     if (!container) return;
     _bookingsContainer = container;
-    container.innerHTML = `<div class="empty-state">Loading your bookings…</div>`;
+    container.innerHTML = `<div class="empty-state">Loading your bookingsâ€¦</div>`;
     try {
         const bookings = await API.get("/api/bookings");
         renderMyBookings(bookings, container);
@@ -1032,7 +1210,7 @@ function renderMyBookings(bookings, container) {
                 <td>${b.check_in} → ${b.check_out}</td>
                 <td>${b.num_adults} adult${b.num_adults === 1 ? "" : "s"}${b.num_children ? `, ${b.num_children} child${b.num_children === 1 ? "" : "ren"}` : ""}</td>
                 <td><span class="badge badge-${statusBadge[b.status] || "pending"}">${b.status}</span></td>
-                <td>${b.total_price != null ? "₹" + b.total_price : "—"}</td>
+                <td>${b.total_price != null ? "₹" + b.total_price : "â€”"}</td>
                 <td>${b.status === "pending" || b.status === "confirmed" ? `<button class="btn btn-danger btn-small" onclick="cancelBooking('${b.id}')">Cancel</button>` : b.status === "completed" ? `<button class="btn btn-primary btn-small" onclick="openReviewModal('${b.id}')">Write Review</button>` : ""}</td>
             </tr>
         `).join("")}
@@ -1075,7 +1253,7 @@ function openBookingsModal() {
         <div class="modal modal-wide">
             <button class="close-modal" onclick="this.closest('.modal-overlay').remove()">&times;</button>
             <h3>Past Bookings</h3>
-            <div id="pastBookingsList"><div class="empty-state">Loading your bookings…</div></div>
+            <div id="pastBookingsList"><div class="empty-state">Loading your bookingsâ€¦</div></div>
         </div>
     `;
     document.body.appendChild(modal);
@@ -1108,7 +1286,7 @@ async function renderHotelRepDashboard(container, user) {
                         ${photoCount > 0
                             ? `<img src="${escapeHtml(p.images[0])}" alt="${escapeHtml(p.name)}">`
                             : `<div class="thumb-placeholder">Click to add photos</div>`}
-                        ${photoCount > 0 ? `<span class="photo-count-badge">🖼 ${photoCount}</span>` : ""}
+                        ${photoCount > 0 ? `<span class="photo-count-badge">📷 ${photoCount}</span>` : ""}
                     </div>
                     <h4>${escapeHtml(p.name)}</h4>
                     <div class="prop-type">${p.property_type || "N/A"} ${p.is_approved ? '<span class="badge badge-approved">Approved</span>' : '<span class="badge badge-pending">Pending</span>'}</div>
@@ -1121,6 +1299,7 @@ async function renderHotelRepDashboard(container, user) {
                     <div class="prop-actions">
                         <button class="btn btn-secondary btn-small" onclick="viewProperty('${p.id}')">Manage Rooms</button>
                         <button class="btn btn-outline btn-small" onclick="managePropertyPhotos('${p.id}')">Photos${photoCount ? ` (${photoCount})` : ""}</button>
+                        <button class="btn btn-outline btn-small" onclick="managePropertyDocuments('${p.id}')">Docs</button>
                         <button class="btn btn-outline btn-small" onclick="editProperty('${p.id}')">Edit</button>
                         <button class="btn btn-outline btn-small" onclick="viewPropertyReviews('${p.id}')">Reviews</button>
                     </div>
@@ -1140,7 +1319,7 @@ async function renderRepBookings() {
     const detailDiv = document.getElementById("propertyDetail");
     detailDiv.innerHTML = "";
     section.style.display = "block";
-    section.innerHTML = `<div class="section-header"><h3>My Bookings</h3><button class="btn btn-outline btn-small" onclick="document.getElementById('repBookingsSection').style.display='none'">Close</button></div><div class="empty-state">Loading…</div>`;
+    section.innerHTML = `<div class="section-header"><h3>My Bookings</h3><button class="btn btn-outline btn-small" onclick="document.getElementById('repBookingsSection').style.display='none'">Close</button></div><div class="empty-state">Loadingâ€¦</div>`;
     try {
         const bookings = await API.get("/api/hotels/bookings");
         let html = `<div class="section-header"><h3>My Bookings</h3><button class="btn btn-outline btn-small" onclick="document.getElementById('repBookingsSection').style.display='none'">Close</button></div>`;
@@ -1159,7 +1338,7 @@ async function renderRepBookings() {
             html += `<tr>
                 <td><strong>${escapeHtml(b.property_name)}</strong></td>
                 <td>${escapeHtml(b.room_type)}</td>
-                <td>${escapeHtml(b.customer_name || "—")}<br><small style="color:var(--ink-faint)">${escapeHtml(b.customer_email)}</small></td>
+                <td>${escapeHtml(b.customer_name || "â€”")}<br><small style="color:var(--ink-faint)">${escapeHtml(b.customer_email)}</small></td>
                 <td>${b.check_in}</td>
                 <td>${b.check_out}</td>
                 <td>${b.num_adults}A ${b.num_children}C</td>
@@ -1299,7 +1478,7 @@ async function viewProperty(propertyId) {
     const detailDiv = document.getElementById("propertyDetail");
     let html = `
         <div class="section-header" style="margin-top:30px">
-            <h3>${escapeHtml(prop.name)} — Rooms</h3>
+            <h3>${escapeHtml(prop.name)} â€” Rooms</h3>
             <button class="btn btn-primary btn-small" onclick="showAddRoomModal('${propertyId}')">+ Add Room</button>
             <button class="btn btn-outline btn-small" onclick="document.getElementById('propertyDetail').innerHTML=''">Close</button>
         </div>
@@ -1562,7 +1741,7 @@ async function managePropertyPhotos(propertyId) {
     modal.innerHTML = `
         <div class="modal">
             <button class="close-modal" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-            <h3>Photos — ${escapeHtml(prop.name)}</h3>
+            <h3>Photos â€” ${escapeHtml(prop.name)}</h3>
             <p class="photo-section-label">Property photos</p>
             <div id="propPhotoGallery" class="image-gallery"></div>
             <div class="image-upload-area">
@@ -1579,7 +1758,7 @@ async function managePropertyPhotos(propertyId) {
     function renderGallery() {
         const gallery = document.getElementById("propPhotoGallery");
         if (images.length === 0) {
-            gallery.innerHTML = `<div class="gallery-empty" style="height:90px;">No photos yet — add some so travelers can see this property.</div>`;
+            gallery.innerHTML = `<div class="gallery-empty" style="height:90px;">No photos yet â€” add some so travelers can see this property.</div>`;
             return;
         }
         gallery.innerHTML = "";
@@ -1628,6 +1807,138 @@ async function managePropertyPhotos(propertyId) {
     modal.querySelector(".close-modal").addEventListener("click", () => initDashboard());
 }
 
+async function managePropertyDocuments(propertyId) {
+    const prop = await API.get(`/api/hotels/${propertyId}`);
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay";
+    modal.innerHTML = `
+        <div class="modal modal-wide">
+            <button class="close-modal" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+            <h3>Documents â€” ${escapeHtml(prop.name)}</h3>
+            <p class="form-subtitle">Upload cancellation policies, house rules, local guides, or other documents for this property.</p>
+            <hr style="margin:16px 0">
+            <form id="docUploadForm" style="display:flex; flex-direction:column; gap:10px;">
+                <div class="form-group">
+                    <label>Document Title</label>
+                    <input type="text" id="docTitle" required placeholder="e.g. Cancellation Policy">
+                </div>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="docType">
+                        <option value="cancellation_policy">Cancellation Policy</option>
+                        <option value="house_rules">House Rules</option>
+                        <option value="transportation">Transportation</option>
+                        <option value="local_guide">Local Guide</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Summary / Content <small>(will be used for search)</small></label>
+                    <textarea id="docSummary" rows="4" placeholder="Paste or type the document content here so guests can search it..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>File (PDF, image, or document)</label>
+                    <input type="file" id="docFile" accept=".pdf,.jpg,.jpeg,.png,.txt">
+                </div>
+                <div id="docUploadError" class="error-msg"></div>
+                <button type="submit" class="btn btn-primary btn-full">Upload Document</button>
+            </form>
+            <hr style="margin:16px 0">
+            <h4>Uploaded Documents</h4>
+            <div id="docList"><div class="empty-state" style="padding:12px">Loading...</div></div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    async function loadDocs() {
+        try {
+            const docs = await API.get(`/api/hotels/${propertyId}/documents`);
+            const container = document.getElementById("docList");
+            if (docs.length === 0) {
+                container.innerHTML = `<div class="empty-state" style="padding:12px">No documents yet.</div>`;
+                return;
+            }
+            container.innerHTML = docs.map(d => `
+                <div class="property-card" style="padding:12px; margin-bottom:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:start;">
+                        <div>
+                            <strong>${escapeHtml(d.title)}</strong>
+                            <span class="badge badge-pending" style="font-size:0.75rem; margin-left:6px;">${d.doc_type.replace(/_/g, ' ')}</span>
+                            ${d.summary_text ? `<p style="font-size:0.85rem; color:var(--ink-faint); margin-top:4px;">${escapeHtml(d.summary_text.slice(0, 200))}${d.summary_text.length > 200 ? '...' : ''}</p>` : ''}
+                            <small style="color:var(--ink-faint)">${new Date(d.created_at).toLocaleDateString()}</small>
+                        </div>
+                        <button class="btn btn-danger btn-small" onclick="deleteDocument('${propertyId}', '${d.id}')">Delete</button>
+                    </div>
+                </div>
+            `).join("");
+        } catch (err) { document.getElementById("docList").innerHTML = `<div class="empty-state" style="padding:12px;color:var(--bad)">${escapeHtml(err.message)}</div>`; }
+    }
+
+    await loadDocs();
+
+    document.getElementById("docUploadForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const errDiv = document.getElementById("docUploadError");
+        errDiv.textContent = "";
+        const title = document.getElementById("docTitle").value.trim();
+        const docType = document.getElementById("docType").value;
+        const summary = document.getElementById("docSummary").value.trim();
+        const fileInput = document.getElementById("docFile");
+        if (!fileInput.files[0]) { errDiv.textContent = "Please select a file."; return; }
+
+        try {
+            const form = new FormData();
+            form.append("file", fileInput.files[0]);
+            form.append("title", title);
+            form.append("doc_type", docType);
+            form.append("summary", summary);
+            const res = await fetch(`/api/hotels/${propertyId}/documents`, {
+                method: "POST", credentials: "include", body: form,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Upload failed");
+            document.getElementById("docUploadForm").reset();
+            await loadDocs();
+        } catch (err) { errDiv.textContent = err.message; }
+    });
+
+    modal.addEventListener("click", (e) => {
+        if (e.target === modal) { modal.remove(); initDashboard(); }
+    });
+    modal.querySelector(".close-modal").addEventListener("click", () => initDashboard());
+}
+
+async function deleteDocument(propertyId, documentId) {
+    if (!confirm("Delete this document?")) return;
+    try {
+        await API.del(`/api/hotels/${propertyId}/documents/${documentId}`);
+        // Re-fetch the document list
+        const modal = document.querySelector(".modal-overlay");
+        if (modal) {
+            const docs = await API.get(`/api/hotels/${propertyId}/documents`);
+            const container = document.getElementById("docList");
+            if (!container) return;
+            if (docs.length === 0) {
+                container.innerHTML = `<div class="empty-state" style="padding:12px">No documents yet.</div>`;
+                return;
+            }
+            container.innerHTML = docs.map(d => `
+                <div class="property-card" style="padding:12px; margin-bottom:8px;">
+                    <div style="display:flex; justify-content:space-between; align-items:start;">
+                        <div>
+                            <strong>${escapeHtml(d.title)}</strong>
+                            <span class="badge badge-pending" style="font-size:0.75rem; margin-left:6px;">${d.doc_type.replace(/_/g, ' ')}</span>
+                            ${d.summary_text ? `<p style="font-size:0.85rem; color:var(--ink-faint); margin-top:4px;">${escapeHtml(d.summary_text.slice(0, 200))}${d.summary_text.length > 200 ? '...' : ''}</p>` : ''}
+                            <small style="color:var(--ink-faint)">${new Date(d.created_at).toLocaleDateString()}</small>
+                        </div>
+                        <button class="btn btn-danger btn-small" onclick="deleteDocument('${propertyId}', '${d.id}')">Delete</button>
+                    </div>
+                </div>
+            `).join("");
+        }
+    } catch (err) { alert(err.message); }
+}
+
 async function deleteRoom(propertyId, roomId) {
     if (!confirm("Delete this room?")) return;
     await API.del(`/api/hotels/${propertyId}/rooms/${roomId}`);
@@ -1673,9 +1984,9 @@ async function renderPendingTab() {
         `;
         for (const p of pendings) {
             html += `<tr>
-                <td>${escapeHtml(p.full_name || "—")}</td>
+                <td>${escapeHtml(p.full_name || "â€”")}</td>
                 <td>${escapeHtml(p.email)}</td>
-                <td>${escapeHtml(p.phone || "—")}</td>
+                <td>${escapeHtml(p.phone || "â€”")}</td>
                 <td>${new Date(p.created_at).toLocaleDateString()}</td>
                 <td>
                     <button class="btn btn-success btn-small" onclick="approveHotel('${p.id}')">Approve</button>
@@ -1694,7 +2005,7 @@ async function renderPendingTab() {
         `;
         for (const p of history) {
             html += `<tr>
-                <td>${escapeHtml(p.full_name || "—")}</td>
+                <td>${escapeHtml(p.full_name || "â€”")}</td>
                 <td>${escapeHtml(p.email)}</td>
                 <td><span class="badge badge-${p.status}">${p.status}</span></td>
                 <td>${new Date(p.created_at).toLocaleDateString()}</td>
@@ -1720,9 +2031,9 @@ async function renderRepsTab() {
         `;
         for (const r of reps) {
             html += `<tr>
-                <td>${escapeHtml(r.full_name || "—")}</td>
+                <td>${escapeHtml(r.full_name || "â€”")}</td>
                 <td>${escapeHtml(r.email)}</td>
-                <td>${escapeHtml(r.phone || "—")}</td>
+                <td>${escapeHtml(r.phone || "â€”")}</td>
                 <td><span class="badge badge-${r.is_active ? "approved" : "rejected"}">${r.is_active ? "Active" : "Inactive"}</span></td>
                 <td><button class="btn btn-${r.is_active ? "danger" : "success"} btn-small" onclick="toggleRep('${r.id}')">${r.is_active ? "Deactivate" : "Activate"}</button></td>
             </tr>`;
@@ -1748,7 +2059,7 @@ async function toggleRep(id) {
     renderRepsTab();
 }
 
-// ── Properties tab ──────────────────────────────────────────────────────────
+// â”€â”€ Properties tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 let propFilterTimer;
 
@@ -1777,7 +2088,7 @@ async function renderPropertiesTab() {
     });
 
     const wrap = document.getElementById("propTableWrap");
-    wrap.innerHTML = `<div class="empty-state">Loading…</div>`;
+    wrap.innerHTML = `<div class="empty-state">Loadingâ€¦</div>`;
     try {
         const props = await API.get(`/api/admin/properties?${params.toString()}`);
         if (props.length === 0) {
@@ -1787,10 +2098,11 @@ async function renderPropertiesTab() {
         const rows = props.map(p => `
             <tr>
                 <td><strong>${escapeHtml(p.name)}</strong></td>
-                <td>${escapeHtml(p.property_type || "—")}</td>
-                <td>${escapeHtml(p.owner_name || "—")}<br><small style="color:var(--ink-faint)">${escapeHtml(p.owner_email || "")}</small></td>
-                <td>${escapeHtml(p.city || "—")}</td>
-                <td style="max-width:240px;word-break:break-word">${escapeHtml(p.address || "—")}</td>
+                <td>${escapeHtml(p.property_type || "â€”")}</td>
+                <td>${escapeHtml(p.owner_name || "â€”")}<br><small style="color:var(--ink-faint)">${escapeHtml(p.owner_email || "")}</small></td>
+                <td>${escapeHtml(p.city || "â€”")}</td>
+                <td style="max-width:240px;word-break:break-word">${escapeHtml(p.address || "â€”")}</td>
+                <td><button class="btn btn-outline btn-small" onclick="viewPropertyDocs('${p.id}','${escapeHtml(p.name)}')">${p.document_count} doc${p.document_count === 1 ? "" : "s"}</button></td>
                 <td><span class="badge badge-${p.is_approved ? "approved" : "pending"}">${p.is_approved ? "Approved" : "Pending"}</span></td>
                 <td>
                     ${p.is_approved
@@ -1803,13 +2115,51 @@ async function renderPropertiesTab() {
 
         wrap.innerHTML = `<div class="table-container"><table>
             <thead><tr>
-                <th>Name</th><th>Type</th><th>Owner</th><th>City</th><th>Address</th><th>Status</th><th>Actions</th>
+                <th>Name</th><th>Type</th><th>Owner</th><th>City</th><th>Address</th><th>Docs</th><th>Status</th><th>Actions</th>
             </tr></thead>
             <tbody>${rows}</tbody>
         </table></div>`;
     } catch (err) {
         wrap.innerHTML = `<div class="empty-state" style="color:var(--bad)">${escapeHtml(err.message)}</div>`;
     }
+}
+
+async function viewPropertyDocs(propertyId, propertyName) {
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay";
+    modal.innerHTML = `
+        <div class="modal modal-wide">
+            <button class="close-modal" onclick="this.closest(\".modal-overlay\").remove()">&times;</button>
+            <h3>Documents — ${escapeHtml(propertyName)}</h3>
+            <div id="adminDocList"><div class="empty-state" style="padding:12px">Loading...</div></div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    try {
+        const docs = await API.get(`/api/admin/properties/${propertyId}/documents`);
+        const container = document.getElementById("adminDocList");
+        if (docs.length === 0) {
+            container.innerHTML = `<div class="empty-state" style="padding:12px">No documents uploaded for this property yet.</div>`;
+            return;
+        }
+        container.innerHTML = docs.map(d => `
+            <div class="property-card" style="padding:12px; margin-bottom:8px;">
+                <div style="display:flex; justify-content:space-between; align-items:start;">
+                    <div>
+                        <strong>${escapeHtml(d.title)}</strong>
+                        <span class="badge badge-pending" style="font-size:0.75rem; margin-left:6px;">${d.doc_type.replace(/_/g, " ")}</span>
+                        ${d.summary_text ? `<p style="font-size:0.85rem; color:var(--ink-faint); margin-top:4px; white-space:pre-wrap;">${escapeHtml(d.summary_text)}</p>` : `<p style="font-size:0.85rem; color:var(--ink-faint); margin-top:4px;"><em>No content</em></p>`}
+                        <small style="color:var(--ink-faint)">Uploaded ${new Date(d.created_at).toLocaleDateString()}</small>
+                    </div>
+                </div>
+            </div>
+        `).join("");
+    } catch (err) { document.getElementById("adminDocList").innerHTML = `<div class="empty-state" style="padding:12px;color:var(--bad)">${escapeHtml(err.message)}</div>`; }
+
+    modal.addEventListener("click", (e) => {
+        if (e.target === modal) modal.remove();
+    });
 }
 
 async function approveProperty(id, name) {
@@ -1834,3 +2184,9 @@ function escapeHtml(str) {
 
 // ==================== Init ====================
 checkAuth();
+
+
+
+
+
+

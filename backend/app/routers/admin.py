@@ -1,4 +1,4 @@
-import os
+﻿import os
 import uuid
 import base64
 
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (
     PendingHotelRegistration, PendingStatus, User, UserRole, Property, Location,
+    PropertyDocument, DocType,
 )
 from app.routers.auth import require_role, get_current_user
 from app.schemas import PendingHotelResponse, ApproveRejectRequest
@@ -113,7 +114,6 @@ async def upload_doc(
         raise HTTPException(status_code=403, detail="Not authorised to upload for this registration")
 
     # ── File validation ────────────────────────────────────────────────────
-    # Read once (so we can check size before touching the filesystem).
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(
@@ -121,8 +121,6 @@ async def upload_doc(
             detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
         )
 
-    # Validate the extension against a strict allowlist.  Do NOT use the raw
-    # client-supplied filename — extract only the suffix and lower-case it.
     raw_ext = os.path.splitext(file.filename or "")[1].lower()
     if raw_ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -211,8 +209,37 @@ def list_properties(
             "address": p.address,
             "is_approved": p.is_approved,
             "created_at": p.created_at.isoformat() if p.created_at else None,
+            "document_count": db.query(PropertyDocument).filter(
+                PropertyDocument.property_id == p.id
+            ).count(),
         }
         for p in props
+    ]
+
+
+@router.get("/properties/{property_id}/documents")
+def list_property_documents_admin(
+    property_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(admin_required),
+):
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    docs = db.query(PropertyDocument).filter(
+        PropertyDocument.property_id == property_id,
+    ).order_by(PropertyDocument.created_at.desc()).all()
+
+    return [
+        {
+            "id": str(d.id),
+            "title": d.title,
+            "doc_type": d.doc_type.value if d.doc_type else "other",
+            "summary_text": d.summary_text,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        }
+        for d in docs
     ]
 
 

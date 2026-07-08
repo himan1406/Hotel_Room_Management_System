@@ -16,6 +16,9 @@ ADMIN_FULL_NAME = os.getenv("ADMIN_FULL_NAME", "System Admin")
 
 PEPPER = os.getenv("PASSWORD_PEPPER")
 
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+
 _missing = [
     name
     for name, value in [
