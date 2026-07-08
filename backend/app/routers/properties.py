@@ -15,6 +15,42 @@ from app.availability import evaluate_room_for_dates
 
 router = APIRouter(prefix="/api/properties", tags=["properties"])
 
+AMENITY_BADGES = [
+    ("wifi", "\U0001f4f6", "Free WiFi"),
+    ("pool", "\U0001f3ca", "Pool"),
+    ("parking", "\U0001f7fe\ufe0f", "Free Parking"),
+    ("restaurant", "\U0001f373", "Restaurant"),
+    ("gym", "\U0001f4cb\ufe0f", "Gym"),
+    ("spa", "\U0001f486", "Spa"),
+    ("bar", "\U0001f378", "Bar"),
+    ("beach_access", "\U0001f3d6\ufe0f", "Beach Access"),
+    ("garden", "\U0001f33f", "Garden"),
+    ("rooftop", "\U0001f307", "Rooftop"),
+    ("campfire", "\U0001f525", "Campfire"),
+    ("business_center", "\U0001f3e2", "Business Center"),
+    ("yoga", "\U0001f9d8", "Yoga"),
+    ("kitchen", "\U0001f373", "Kitchen"),
+    ("fireplace", "\U0001f525", "Fireplace"),
+    ("boat_service", "\u26f5", "Boat Service"),
+    ("water_sports", "\U0001f3c4", "Water Sports"),
+    ("camel_safari", "\U0001f42a", "Camel Safari"),
+]
+
+
+def _compute_badges(prop):
+    badges = []
+    if prop.amenities:
+        for key, icon, label in AMENITY_BADGES:
+            if prop.amenities.get(key):
+                badges.append({"icon": icon, "label": label})
+                if len(badges) >= 5:
+                    break
+    if prop.avg_rating >= 4.5:
+        badges.append({"icon": "\u2b50", "label": "Excellent"})
+    elif prop.avg_rating >= 4.0:
+        badges.append({"icon": "\u2b50", "label": "Great"})
+    return badges
+
 
 @router.get("/search")
 def search_properties(
@@ -151,6 +187,8 @@ def search_properties(
             "from_price": matching_rooms[0]["total_price"],
             "thumbnail": thumbnail,
             "photo_count": photo_count,
+            "badges": _compute_badges(prop),
+            "ai_highlight": prop.ai_highlight,
             "rooms": matching_rooms,
         })
 

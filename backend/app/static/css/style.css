@@ -1268,6 +1268,10 @@ tbody tr:hover td { background: var(--paper); }
     color: #fff;
 }
 
+.prop-badges { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 4px; }
+.prop-badge { font-size: 0.6rem; background: var(--gold-tint); color: var(--ink); padding: 1px 6px; border-radius: 99px; white-space: nowrap; line-height: 1.5; }
+.prop-ai-highlight { font-size: 0.72rem; color: var(--ink-faint); margin: 2px 0 4px; line-height: 1.35; max-width: 90%; }
+
 .chat-conv-info { flex: 1; min-width: 0; }
 .chat-conv-name { font-size: 0.9rem; font-weight: 600; margin-bottom: 2px; }
 .chat-conv-preview {

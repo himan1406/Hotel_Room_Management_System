@@ -235,16 +235,11 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
 
     # ── Reuse detection ──────────────────────────────────────────────────────
     if rt.is_used:
-        # The same token has already been rotated once → someone else (or a
-        # replay attack) is presenting a consumed token.  Nuke everything so
-        # the real owner has to log in again with their password.
-        if user:
-            _revoke_all_user_sessions(user.id, db)
-            db.commit()
-        # Wipe cookies on the response so the attacker's browser is cleaned up too.
-        response.delete_cookie(key="access_token", path="/")
-        response.delete_cookie(key="refresh_token", path="/")
-        raise HTTPException(status_code=401, detail="Token reuse detected — all sessions revoked. Please log in again.")
+        # The same token has already been rotated once — likely a stale
+        # request from another tab.  Do NOT revoke all sessions (that would
+        # log the real user out).  Just reject this single request; the
+        # legitimate caller already got a fresh pair of tokens.
+        raise HTTPException(status_code=401, detail="Token already used — session still active on other tab.")
 
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")

@@ -13,8 +13,9 @@ const API = {
         }
         const res = await fetch(path, opts);
 
-        // Auto-refresh on 401 â€” but NEVER for auth endpoints (they handle their own 401s)
-        if (res.status === 401 && !_isRetry && !path.startsWith("/api/auth/")) {
+        // Auto-refresh on 401 — but skip for auth endpoints (they handle their own 401s),
+        // EXCEPT /api/auth/me which needs refresh to detect logged-in state on page load.
+        if (res.status === 401 && !_isRetry && (!path.startsWith("/api/auth/") || path === "/api/auth/me")) {
             const refreshed = await API._tryRefresh();
             if (refreshed) {
                 // Retry the original request once with the new access token
@@ -72,6 +73,10 @@ const API = {
         return data;
     },
 };
+
+// Proactively refresh the access token every 15 minutes (before its 20-min expiry)
+// so API calls never hit a stale token.  Silently no-ops if not logged in.
+setInterval(() => API._tryRefresh(), 15 * 60 * 1000);
 
 // ==================== Auth ====================
 async function checkAuth() {
@@ -1025,6 +1030,8 @@ function renderSearchResults(properties) {
             <h4>${escapeHtml(p.name)}</h4>
             <div class="prop-type">${escapeHtml([p.city, p.district].filter(Boolean).join(", ") || "Location N/A")}${p.property_type ? " · " + escapeHtml(p.property_type) : ""}</div>
             ${p.description ? `<p>${escapeHtml(p.description.slice(0, 110))}${p.description.length > 110 ? "…" : ""}</p>` : ""}
+            ${p.badges && p.badges.length > 0 ? `<div class="prop-badges">${p.badges.map(b => `<span class="prop-badge">${b.icon} ${b.label}</span>`).join("")}</div>` : ""}
+            ${p.ai_highlight ? `<div class="prop-ai-highlight">✨ ${escapeHtml(p.ai_highlight)}</div>` : ""}
             <p style="font-family:'Space Mono',monospace; font-size:0.78rem; color:var(--ink-soft); margin:10px 0 14px;">From ₹${p.from_price} total &middot; <a href="#" onclick="event.preventDefault();openPropertyReviews('${p.id}')" style="color:var(--lilac-deep);">${p.review_count} review${p.review_count === 1 ? "" : "s"}</a></p>
             <div class="room-pick-list">
                 ${p.rooms.map(r => `

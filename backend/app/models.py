@@ -141,6 +141,7 @@ class Property(Base):
     avg_rating = Column(Float, default=0)
     review_count = Column(Integer, default=0)
     trending_score = Column(Float, default=0)
+    ai_highlight = Column(Text, nullable=True)
     is_approved = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
