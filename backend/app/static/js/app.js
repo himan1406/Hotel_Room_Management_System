@@ -151,6 +151,7 @@ let ws = null;
 let wsReconnectTimer = null;
 let msgCurrentOtherId = null;
 let msgCurrentPropertyId = null;
+let msgCurrentOtherRole = null;
 
 function toggleChatPanel() {
     const panel = document.getElementById("chatPanel");
@@ -165,8 +166,48 @@ function toggleChatPanel() {
 function showChatConversations() {
     document.getElementById("chatConversations").style.display = "block";
     document.getElementById("chatConversationView").style.display = "none";
+    const suggestions = document.getElementById("chatSuggestions");
+    if (suggestions) suggestions.style.display = "none";
     msgCurrentOtherId = null;
     msgCurrentPropertyId = null;
+    msgCurrentOtherRole = null;
+}
+
+const CHAT_SUGGESTIONS = {
+    hotel_rep: [
+        "What's your cancellation policy?",
+        "What time is check-in?",
+        "Do you offer airport pickup?",
+        "Is breakfast included?",
+        "What amenities do you have?",
+    ],
+    admin: [
+        "How can I help you?",
+    ],
+};
+
+function renderSuggestions(role) {
+    const container = document.getElementById("chatSuggestions");
+    if (!container) return;
+    const suggestions = CHAT_SUGGESTIONS[role];
+    if (!suggestions) {
+        container.style.display = "none";
+        return;
+    }
+    container.style.display = "flex";
+    container.innerHTML = suggestions.map(s =>
+        `<button class="chat-suggestion-chip" onclick="useSuggestion(this.textContent)">${escapeHtml(s)}</button>`
+    ).join("");
+}
+
+function useSuggestion(text) {
+    const input = document.getElementById("chatMessageInput");
+    if (input) {
+        input.value = text;
+        input.focus();
+        input.style.height = "auto";
+        input.style.height = input.scrollHeight + "px";
+    }
 }
 
 async function loadConversations() {
@@ -176,6 +217,7 @@ async function loadConversations() {
         convos.unshift({
             other_user_id: "ai-frontdesk",
             other_user_name: "Front Desk AI",
+            other_user_role: "ai",
             property_id: null,
             property_name: "AI Assistant",
             last_message: "Ask me about properties, policies, and local attractions!",
@@ -184,7 +226,7 @@ async function loadConversations() {
         container.innerHTML = convos.map(c => {
             const isAi = c.other_user_id === "ai-frontdesk";
             return `
-            <div class="chat-conv-item" onclick="openConversation('${isAi ? 'ai-frontdesk' : c.other_user_id}', '${isAi ? '' : c.property_id || ''}', '${escapeHtml(c.property_name)}', '${escapeHtml(c.other_user_name)}')">
+            <div class="chat-conv-item" onclick="openConversation('${isAi ? 'ai-frontdesk' : c.other_user_id}', '${isAi ? '' : c.property_id || ''}', '${escapeHtml(c.property_name)}', '${escapeHtml(c.other_user_name)}', '${c.other_user_role || ''}')">
                 <div class="chat-conv-avatar ${isAi ? 'ai-avatar' : ''}">${isAi ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' : escapeHtml(c.other_user_name.charAt(0).toUpperCase())}</div>
                 <div class="chat-conv-info">
                     <div class="chat-conv-name">${escapeHtml(c.other_user_name)}</div>
@@ -210,17 +252,19 @@ function updateMsgBadge(convos) {
     }
 }
 
-async function openConversation(otherUserId, propertyId, propertyName, otherName) {
+async function openConversation(otherUserId, propertyId, propertyName, otherName, otherUserRole) {
     if (otherUserId === "ai-frontdesk") {
         if (typeof openAIChat === "function") openAIChat();
         return;
     }
     msgCurrentOtherId = otherUserId;
     msgCurrentPropertyId = propertyId || null;
+    msgCurrentOtherRole = otherUserRole || "customer";
     document.getElementById("chatConversations").style.display = "none";
     document.getElementById("chatConversationView").style.display = "flex";
     const title = propertyName ? `Re: ${propertyName} â€” ${otherName}` : otherName;
     document.getElementById("chatViewTitle").textContent = title;
+    renderSuggestions(msgCurrentOtherRole);
     await loadMessages(otherUserId, propertyId);
 }
 
@@ -297,7 +341,7 @@ async function contactHost(propertyId) {
             return;
         }
         toggleChatPanel();
-        openConversation(prop.owner_rep_id, propertyId, prop.name, prop.owner_name || "Host");
+        openConversation(prop.owner_rep_id, propertyId, prop.name, prop.owner_name || "Host", "hotel_rep");
     } catch (err) {
         alert(err.message);
     }

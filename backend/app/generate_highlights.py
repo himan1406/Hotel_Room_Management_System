@@ -7,7 +7,7 @@ from app.llm import ask_llm
 
 SYSTEM_PROMPT = (
     "You are a terse copywriter for a hotel booking platform. "
-    "Write 1-2 short phrases (max 120 characters total) highlighting what "
+    "Write 1-2 short phrases (max 80 characters total) highlighting what "
     "stands out about this property. Mention specific amenities, experiences, "
     "or qualities. Vary your phrasing — never start with 'Guests rave' or "
     "'Guests love' or 'Guests adore'. "
@@ -38,6 +38,25 @@ def generate_highlight(prop_name, description, reviews):
     if not reply or "API_KEY" in reply or "unavailable" in reply or "configured" in reply:
         return None
     return reply.strip().rstrip(".").strip()[:200]
+def update_property_highlight(property_id):
+    db = SessionLocal()
+    try:
+        prop = db.query(Property).filter(Property.id == property_id).first()
+        if not prop:
+            return
+        reviews = (
+            db.query(Review)
+            .filter(Review.property_id == property_id, Review.comment.isnot(None))
+            .order_by(Review.rating.desc(), Review.created_at.desc())
+            .limit(5)
+            .all()
+        )
+        highlight = generate_highlight(prop.name, prop.description, reviews)
+        if highlight:
+            prop.ai_highlight = highlight
+            db.commit()
+    finally:
+        db.close()
 
 
 def main():

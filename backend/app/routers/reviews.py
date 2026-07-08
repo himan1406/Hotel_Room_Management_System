@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -9,6 +9,7 @@ from app.models import Booking, BookingStatus, Property, Review, User, UserRole
 from app.routers.auth import get_current_user, require_role, hash_token
 from app.schemas import ReviewCreate, ReviewUpdate, ReviewRespond, ReviewResponse
 from app.models import Session as SessionModel
+from app.generate_highlights import update_property_highlight
 
 router = APIRouter(prefix="/api/reviews", tags=["reviews"])
 customer_required = require_role(UserRole.customer)
@@ -28,6 +29,7 @@ def _recalc_property_rating(prop: Property, db: Session) -> None:
 @router.post("")
 def create_review(
     req: ReviewCreate,
+    background_tasks: BackgroundTasks,
     user: User = Depends(customer_required),
     db: Session = Depends(get_db),
 ):
@@ -63,6 +65,7 @@ def create_review(
     prop = db.query(Property).filter(Property.id == booking.room.property_id).first()
     if prop:
         _recalc_property_rating(prop, db)
+        background_tasks.add_task(update_property_highlight, prop.id)
 
     db.commit()
     db.refresh(review)
@@ -117,6 +120,7 @@ def list_property_reviews(
 def update_review(
     review_id: uuid.UUID,
     req: ReviewUpdate,
+    background_tasks: BackgroundTasks,
     user: User = Depends(customer_required),
     db: Session = Depends(get_db),
 ):
@@ -132,6 +136,7 @@ def update_review(
     prop = db.query(Property).filter(Property.id == review.property_id).first()
     if prop:
         _recalc_property_rating(prop, db)
+        background_tasks.add_task(update_property_highlight, prop.id)
 
     db.commit()
     db.refresh(review)
@@ -143,6 +148,7 @@ def update_review(
 @router.delete("/{review_id}")
 def delete_review(
     review_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     user: User = Depends(customer_required),
     db: Session = Depends(get_db),
 ):
@@ -158,6 +164,7 @@ def delete_review(
 
     if prop:
         _recalc_property_rating(prop, db)
+        background_tasks.add_task(update_property_highlight, prop.id)
 
     db.commit()
     return {"message": "Review deleted"}

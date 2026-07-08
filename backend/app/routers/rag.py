@@ -69,7 +69,6 @@ def search_chunks(
     db: Session = Depends(get_db),
 ):
     query_vec = embed_text(q)
-    # pgvector <=> is cosine distance (0 = identical, 2 = opposite)
     sql = text("""
         SELECT
             dc.id, dc.content, dc.chunk_index,

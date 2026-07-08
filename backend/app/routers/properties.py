@@ -163,11 +163,6 @@ def search_properties(
 
         matching_rooms.sort(key=lambda r: r["total_price"])
 
-        # â”€â”€ Thumbnail & photo count â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        # Prefer a property-level photo (uploaded by the rep for the property
-        # as a whole) and only fall back to a room photo if the property has
-        # none. photo_count lets the UI show "12 photos" on the card so
-        # travelers know there's more to see before opening the gallery.
         prop_images = prop.images or []
         thumbnail = prop_images[0] if prop_images else next(
             (r["images"][0] for r in matching_rooms if r["images"]), None

@@ -101,6 +101,7 @@ def list_conversations(
             seen[other_id] = {
                 "other_user_id": other_id,
                 "other_user_name": other.full_name if other else "Unknown",
+                "other_user_role": other.role.value if other else None,
                 "property_id": str(msg.property_id) if msg.property_id else None,
                 "property_name": prop.name if prop else "Unknown",
                 "last_message": msg.body[:100],

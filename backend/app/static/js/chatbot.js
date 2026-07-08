@@ -24,11 +24,31 @@
                 <p class="ai-kb-warning" id="aiKbWarning" style="display:none">⚠️ No property documents have been indexed yet. Answers will be based on general knowledge.</p>
             </div>
         </div>
+        <div class="chat-suggestions" id="aiChatSuggestions"></div>
         <div class="chat-input-area">
             <textarea id="aiChatInput" rows="1" placeholder="Ask Front Desk..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIChatMessage()}"></textarea>
             <button class="btn btn-primary btn-small" onclick="sendAIChatMessage()" id="aiChatSendBtn">Send</button>
         </div>
     </div>`;
+
+    const AI_SUGGESTIONS = [
+        "Where to go for a romantic getaway?",
+        "Best family-friendly hotels?",
+        "What's the cancellation policy?",
+        "Show me hotels with pools",
+        "Any good resorts in Goa?",
+    ];
+
+    function renderAISuggestions() {
+        const container = document.getElementById("aiChatSuggestions");
+        if (!container) return;
+        const msgs = document.getElementById("aiChatMessages");
+        const hasMessages = msgs && msgs.querySelectorAll(".chat-msg").length > 0;
+        container.style.display = hasMessages ? "none" : "flex";
+        container.innerHTML = AI_SUGGESTIONS.map(s =>
+            `<button class="chat-suggestion-chip" onclick="document.getElementById('aiChatInput').value=this.textContent;document.getElementById('aiChatInput').focus();document.getElementById('aiChatInput').style.height='auto'">${s}</button>`
+        ).join("");
+    }
 
     document.addEventListener("DOMContentLoaded", function () {
         document.body.insertAdjacentHTML("beforeend", HTML);
@@ -36,6 +56,7 @@
         if (aiSessionId) {
             loadChatHistory();
         }
+        renderAISuggestions();
     });
 
     window.openAIChat = function () {
@@ -57,6 +78,7 @@
             const msgs = document.getElementById("aiChatMessages");
             if (msgs) msgs.scrollTop = msgs.scrollHeight;
             checkKbStatus();
+            renderAISuggestions();
         }
     };
 
@@ -80,6 +102,8 @@
 
         input.value = "";
         input.style.height = "auto";
+        const suggestions = document.getElementById("aiChatSuggestions");
+        if (suggestions) suggestions.style.display = "none";
         appendAIMessage("user", msg);
         showAITyping();
         isLoading = true;
@@ -168,6 +192,8 @@
                 data.messages.forEach(m => {
                     appendAIMessage(m.role, m.content, m.sources);
                 });
+                const suggestions = document.getElementById("aiChatSuggestions");
+                if (suggestions) suggestions.style.display = "none";
             }
         } catch (e) {
             // silently fail
