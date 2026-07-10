@@ -245,7 +245,15 @@ def refresh(request: Request, response: Response, db: Session = Depends(get_db))
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
     # ── Token expired ─────────────────────────────────────────────────────────
-    if rt.expires_at <= datetime.now(timezone.utc):
+    # ── Token expired ─────────────────────────────────────────────────────────
+    # rt.expires_at comes back from Postgres as a naive datetime (the column is
+    # plain DateTime, not timestamp-with-timezone) even though it was written
+    # as UTC. Normalize before comparing against an aware "now", otherwise
+    # Python raises TypeError: can't compare offset-naive and offset-aware datetimes.
+    expires_at = rt.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= datetime.now(timezone.utc):
         db.delete(rt)
         db.commit()
         raise HTTPException(status_code=401, detail="Refresh token expired")

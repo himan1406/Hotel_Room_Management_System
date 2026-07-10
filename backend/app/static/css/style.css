@@ -1548,3 +1548,466 @@ tbody tr:hover td { background: var(--paper); }
     0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
     40% { transform: translateY(-6px); opacity: 1; }
 }
+
+/* ── Chat Property Cards ── */
+.chat-property-card-placeholder {
+    margin-top: 10px;
+    width: 100%;
+}
+.chat-prop-card-loading,
+.chat-prop-card-error {
+    font-size: 0.8rem;
+    color: var(--ink-faint);
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: var(--radius-sm);
+    text-align: center;
+}
+.chat-prop-card-error {
+    color: var(--bad);
+    background: var(--bad-bg);
+}
+.chat-prop-card {
+    display: flex;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    padding: 8px;
+    cursor: pointer;
+    box-shadow: var(--shadow-sm);
+    transition: transform var(--fast) var(--ease), box-shadow var(--fast) var(--ease), border-color var(--fast) var(--ease);
+    text-align: left;
+    margin-top: 6px;
+    overflow: hidden;
+}
+.chat-prop-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--accent);
+}
+.chat-prop-card-thumb {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+}
+.chat-prop-card-thumb-placeholder {
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--gold-tint);
+    border-radius: var(--radius-sm);
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+.chat-prop-card-details {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    flex: 1;
+    min-width: 0;
+}
+.chat-prop-card-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin: 0 0 3px 0;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.chat-prop-card-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+.chat-prop-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.72rem;
+}
+.chat-prop-card-price {
+    font-family: 'Space Mono', monospace;
+    font-weight: 700;
+    color: var(--accent);
+}
+.chat-prop-card-action {
+    font-weight: 600;
+    color: var(--gold);
+}
+
+/* ── Property Detail View Gallery ── */
+.property-detail-gallery {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 12px;
+    height: 380px;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+.gallery-main-img {
+    height: 100%;
+    cursor: pointer;
+    overflow: hidden;
+}
+.gallery-main-img img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform var(--med) var(--ease);
+}
+.gallery-main-img:hover img {
+    transform: scale(1.03);
+}
+.gallery-sub-images {
+    display: grid;
+    grid-template-rows: repeat(3, 1fr);
+    gap: 12px;
+    height: 100%;
+}
+.gallery-sub-img {
+    height: 100%;
+    cursor: pointer;
+    overflow: hidden;
+    position: relative;
+}
+.gallery-sub-img img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform var(--med) var(--ease);
+}
+.gallery-sub-img:hover img {
+    transform: scale(1.05);
+}
+.gallery-more-photos {
+    background: var(--ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+.gallery-more-photos:hover {
+    background: var(--accent-deep);
+}
+
+@media (max-width: 768px) {
+    .property-detail-body {
+        grid-template-columns: 1fr !important;
+    }
+    .property-detail-gallery {
+        grid-template-columns: 1fr;
+        height: 240px;
+    }
+    .gallery-sub-images {
+        display: none;
+    }
+}
+
+/* ── Compare Floating Bar ── */
+.compare-floating-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--ink);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 900;
+    transform: translateY(100%);
+    transition: transform var(--med) var(--ease);
+    box-shadow: 0 -4px 24px rgba(42, 33, 27, 0.18);
+}
+.compare-floating-bar::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--gold) 100%);
+}
+.compare-floating-bar.open {
+    transform: translateY(0);
+}
+.compare-bar-content {
+    max-width: 1120px;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.9rem;
+}
+.compare-bar-content strong {
+    font-family: 'Space Mono', monospace;
+    color: var(--gold);
+}
+
+/* ── Comparison Grid Cards ── */
+.comparison-prop-card {
+    position: relative;
+    transition: transform var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.comparison-prop-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-md);
+}
+.comparison-prop-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--gold) 100%);
+}
+
+/* ── Skeleton loader pulse animation ── */
+@keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+/* ── Comparison Chat Card ── */
+.comparison-chat-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    position: relative;
+    overflow: hidden;
+}
+.comparison-chat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--gold) 100%);
+}
+
+/* ── Compare grid responsive ── */
+@media (max-width: 768px) {
+    .comparison-grid {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* ── Compare checkbox ── */
+.compare-checkbox {
+    accent-color: var(--accent);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+/* ══════════════════════════════════════════
+   Compare Chat Message Styles
+══════════════════════════════════════════ */
+
+/* User message — right-aligned pill */
+.comp-msg-user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 18px 18px 4px 18px;
+    max-width: 72%;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+/* AI message — full-width document card */
+.comp-msg-ai {
+    align-self: stretch;
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    padding: 18px 20px 12px;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: var(--ink);
+    word-break: break-word;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+.comp-msg-ai:hover {
+    border-color: var(--line-soft);
+}
+
+/* ── Markdown: Headings ── */
+.comp-md-h1,
+.comp-md-h2 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--ink);
+    margin: 14px 0 6px;
+    padding-bottom: 5px;
+    border-bottom: 2px solid var(--accent);
+    letter-spacing: -0.01em;
+}
+.comp-md-h3 {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin: 16px 0 6px;
+}
+
+/* ── Markdown: Paragraphs ── */
+.comp-md-p {
+    margin: 6px 0;
+    color: var(--ink-soft);
+}
+.comp-md-p:first-child {
+    margin-top: 0;
+}
+
+/* ── Markdown: Horizontal rule ── */
+.comp-md-hr {
+    border: none;
+    border-top: 1px solid var(--line-soft);
+    margin: 12px 0;
+}
+
+/* ── Markdown: Lists ── */
+.comp-md-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.comp-md-list li {
+    padding-left: 18px;
+    position: relative;
+    color: var(--ink-soft);
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+.comp-md-list li::before {
+    content: '•';
+    position: absolute;
+    left: 4px;
+    color: var(--accent);
+    font-weight: 700;
+}
+
+/* ── Markdown: Inline code ── */
+.comp-md-code {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.78rem;
+    background: var(--gold-tint);
+    border: 1px solid var(--line-soft);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--accent-deep);
+}
+
+/* ── Markdown: Tables ── */
+.comp-md-table-wrap {
+    overflow-x: auto;
+    margin: 12px 0;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.comp-md-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+.comp-md-table thead {
+    background: var(--ink);
+    color: #fff;
+}
+.comp-md-table thead th {
+    padding: 10px 14px;
+    text-align: left;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 700;
+    border-bottom: 2px solid var(--accent);
+    white-space: nowrap;
+}
+.comp-md-table tbody tr {
+    border-bottom: 1px solid var(--line-soft);
+    transition: background var(--fast) var(--ease);
+}
+.comp-md-table tbody tr:last-child {
+    border-bottom: none;
+}
+.comp-md-table tbody tr:nth-child(even) {
+    background: var(--gold-tint);
+}
+.comp-md-table tbody tr:hover {
+    background: rgba(var(--accent-rgb, 120, 40, 28), 0.05);
+}
+.comp-md-table td {
+    padding: 9px 14px;
+    color: var(--ink-soft);
+    line-height: 1.45;
+    vertical-align: middle;
+}
+.comp-md-table td:first-child {
+    font-weight: 600;
+    color: var(--ink);
+}
+
+/* ── Table cell badges ── */
+.comp-td-yes {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: rgba(39, 174, 96, 0.12);
+    color: #27ae60;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 0.8rem;
+}
+.comp-td-no {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: rgba(231, 76, 60, 0.1);
+    color: #e74c3c;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 0.8rem;
+}
+.comp-td-empty {
+    color: var(--ink-faint);
+    font-size: 1rem;
+}
+
+/* Widen the comparison chat message area to fit tables */
+#compChatMessages {
+    max-height: 420px !important;
+}
+
+

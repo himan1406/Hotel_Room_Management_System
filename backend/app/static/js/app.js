@@ -1,4 +1,4 @@
-﻿// ==================== API Layer ====================
+// ==================== API Layer ====================
 const API = {
     _refreshing: null,   // deduplicate concurrent refresh calls
 
@@ -778,6 +778,10 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // ==================== Dashboard ====================
+let currentSelectedProperty = null;
+let selectedCompareIds = [];
+let compareChatHistory = [];
+
 async function initDashboard() {
     const user = await checkAuth();
     if (!user) {
@@ -792,7 +796,14 @@ async function initDashboard() {
     if (user.role === "customer") {
         if (eyebrow) eyebrow.textContent = "Traveler Dashboard";
         if (heading) heading.textContent = "Find your next stay";
-        renderCustomerDashboard(view, user);
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        const propId = urlParams.get("property_id");
+        if (propId) {
+            renderPropertyDetailView(view, propId);
+        } else {
+            renderCustomerDashboard(view, user);
+        }
         return;
     }
 
@@ -807,6 +818,540 @@ async function initDashboard() {
     if (eyebrow) eyebrow.textContent = "Hotel Rep Dashboard";
     if (heading) heading.textContent = "Your Properties";
     renderHotelRepDashboard(view, user);
+}
+
+window.showPropertyInDashboard = function(propertyId) {
+    if (window.location.pathname !== "/dashboard") {
+        window.location.href = `/dashboard?property_id=${propertyId}`;
+        return;
+    }
+    
+    // Close the chatbot panel so they can see the dashboard clearly
+    const aiChatPanel = document.getElementById("aiChatPanel");
+    if (aiChatPanel) {
+        aiChatPanel.style.display = "none";
+        const fab = document.getElementById("aiChatFAB");
+        if (fab) fab.classList.remove("ai-fab-open");
+    }
+
+    const view = document.getElementById("dashboardView");
+    if (view) {
+        renderPropertyDetailView(view, propertyId);
+    }
+};
+
+window.goBackToDashboard = function() {
+    const url = new URL(window.location);
+    url.searchParams.delete("property_id");
+    window.history.replaceState({}, "", url);
+    initDashboard();
+};
+
+window.handleCompareCheckboxChange = function() {
+    const checkboxes = document.querySelectorAll(".compare-checkbox:checked");
+    selectedCompareIds = Array.from(checkboxes).map(cb => cb.value);
+    
+    let bar = document.getElementById("compareFloatingBar");
+    if (selectedCompareIds.length > 0) {
+        if (!bar) {
+            bar = document.createElement("div");
+            bar.id = "compareFloatingBar";
+            bar.className = "compare-floating-bar";
+            document.body.appendChild(bar);
+        }
+        bar.innerHTML = `
+            <div class="compare-bar-content container" style="display:flex; justify-content:space-between; align-items:center; width:100%; color:#fff;">
+                <span>Selected <strong>${selectedCompareIds.length}</strong> stay${selectedCompareIds.length === 1 ? "" : "s"} for comparison</span>
+                <div style="display:flex; gap:12px;">
+                    <button class="btn btn-outline btn-small" onclick="clearCompareSelection()" style="border-color:rgba(255,255,255,0.3); color:#fff; background:transparent;">Clear</button>
+                    <button class="btn btn-secondary btn-small" onclick="startCompareView()" ${selectedCompareIds.length < 2 ? "disabled" : ""}>Compare Now</button>
+                </div>
+            </div>
+        `;
+        setTimeout(() => bar.classList.add("open"), 10);
+    } else {
+        if (bar) {
+            bar.classList.remove("open");
+            setTimeout(() => bar.remove(), 200);
+        }
+    }
+};
+
+window.clearCompareSelection = function() {
+    document.querySelectorAll(".compare-checkbox").forEach(cb => cb.checked = false);
+    window.handleCompareCheckboxChange();
+};
+
+window.startCompareView = async function() {
+    const bar = document.getElementById("compareFloatingBar");
+    if (bar) {
+        bar.classList.remove("open");
+        setTimeout(() => bar.remove(), 200);
+    }
+    
+    const view = document.getElementById("dashboardView");
+    if (!view) return;
+    
+    const url = new URL(window.location);
+    url.searchParams.delete("property_id");
+    window.history.replaceState({}, "", url);
+    
+    view.innerHTML = `<div class="empty-state">Preparing comparison workspace...</div>`;
+    
+    const eyebrow = document.getElementById("dashboardEyebrow");
+    const heading = document.getElementById("dashboardHeading");
+    if (eyebrow) eyebrow.textContent = "AI Workspace";
+    if (heading) heading.textContent = "Compare Stays";
+
+    try {
+        const propPromises = selectedCompareIds.map(id => API.get(`/api/properties/${id}`));
+        const properties = await Promise.all(propPromises);
+        compareChatHistory = [];
+        
+        view.innerHTML = `
+            <div class="comparison-container" style="display:flex; flex-direction:column; gap:32px; margin-top:20px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <button class="btn btn-outline btn-small" onclick="goBackToSearch()">&larr; Back to Search</button>
+                    <span class="mono-label" style="font-size:0.8rem;">RAG-Powered Comparative Mode</span>
+                </div>
+                
+                <div class="comparison-grid" style="display:grid; grid-template-columns: repeat(${properties.length}, 1fr); gap:20px;">
+                    ${properties.map(p => {
+                        const minPrice = p.rooms && p.rooms.length > 0 
+                            ? Math.min(...p.rooms.map(r => r.base_price)) 
+                            : null;
+                        const priceStr = minPrice ? `From ₹${minPrice}/night` : "Price N/A";
+                        const thumbnail = p.images && p.images.length > 0 ? p.images[0] : "";
+                        return `
+                            <div class="card comparison-prop-card" id="compCard_${p.id}" style="padding:20px; display:flex; flex-direction:column; gap:12px;">
+                                <div class="comp-prop-thumb" style="height:140px; border-radius:var(--radius-md); overflow:hidden; background:var(--gold-tint);">
+                                    ${thumbnail ? `<img src="${escapeHtml(thumbnail)}" alt="${escapeHtml(p.name)}" style="width:100%; height:100%; object-fit:cover;">` : `<div style="height:100%; display:flex; align-items:center; justify-content:center; font-size:2rem;">🏨</div>`}
+                                </div>
+                                <h4 style="font-size:1.1rem; margin-bottom:2px;">${escapeHtml(p.name)}</h4>
+                                <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--ink-soft); font-family:'Space Mono',monospace;">
+                                    <span>📍 ${escapeHtml(p.city || "Unknown")}</span>
+                                    <span>⭐ ${p.avg_rating} (${p.review_count})</span>
+                                </div>
+                                <div style="font-family:'Space Mono',monospace; font-weight:700; font-size:0.85rem; color:var(--accent);">${priceStr}</div>
+                                
+                                <hr style="border:0; border-top:1px solid var(--line-soft); margin:4px 0;">
+                                
+                                <h5 class="mono-label" style="font-size:0.65rem; color:var(--gold); margin-bottom:4px;">Why Choose This Stay</h5>
+                                <ul class="comp-attributes-list" id="compAttrs_${p.id}" style="list-style:none; padding:0; display:flex; flex-direction:column; gap:6px;">
+                                    <li class="comp-attr-skeleton" style="height:14px; background:var(--line-soft); border-radius:4px; width:90%; animation: pulse 1.5s infinite;"></li>
+                                    <li class="comp-attr-skeleton" style="height:14px; background:var(--line-soft); border-radius:4px; width:75%; animation: pulse 1.5s infinite;"></li>
+                                    <li class="comp-attr-skeleton" style="height:14px; background:var(--line-soft); border-radius:4px; width:80%; animation: pulse 1.5s infinite;"></li>
+                                </ul>
+                            </div>
+                        `;
+                    }).join("")}
+                </div>
+                
+                <div class="card comparison-chat-card" style="padding:24px; display:flex; flex-direction:column; gap:16px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span class="ai-chat-avatar" style="width:28px; height:28px; font-size:0.6rem; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; border-radius:50%;">VS</span>
+                        <h4 style="font-size:1.15rem; margin:0;">Compare Concierge</h4>
+                    </div>
+                    <p style="font-size:0.85rem; color:var(--ink-soft); margin-top:-6px; margin-bottom:0;">Ask questions specifically comparing the properties above. The AI will query customer reviews and internal policy documents using RAG.</p>
+                    
+                    <div class="comparison-chat-messages" id="compChatMessages" style="max-height: 250px; overflow-y: auto; padding-right:8px; display:flex; flex-direction:column; gap:12px; font-size:0.9rem; border:1px solid var(--line-soft); border-radius:var(--radius-sm); padding:12px; background:rgba(0,0,0,0.015);">
+                        <div class="chat-msg chat-msg-theirs" style="padding:10px 14px; background:var(--gold-tint); border-radius:var(--radius-sm); max-width:85%; align-self:flex-start; line-height:1.45;">
+                            Hi! I am ready to compare these ${properties.length} properties. Ask me anything, or click a suggestion below!
+                        </div>
+                    </div>
+                    
+                    <div class="comparison-chat-suggestions" style="display:flex; flex-wrap:wrap; gap:8px;">
+                        <button class="chat-suggestion-chip" onclick="askCompareQuestion(this.textContent)">Which property has a better cancellation policy?</button>
+                        <button class="chat-suggestion-chip" onclick="askCompareQuestion(this.textContent)">Which stay is quieter for work?</button>
+                        <button class="chat-suggestion-chip" onclick="askCompareQuestion(this.textContent)">Compare their child policies and amenities.</button>
+                        <button class="chat-suggestion-chip" onclick="askCompareQuestion(this.textContent)">Which has better transit accessibility?</button>
+                    </div>
+                    
+                    <div class="chat-input-area" style="margin-top:8px; display:flex; gap:10px; width:100%;">
+                        <textarea id="compChatInput" rows="1" placeholder="Ask Compare Concierge..." style="flex:1; resize:none;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendCompareChatMessage()}"></textarea>
+                        <button class="btn btn-primary btn-small" id="compChatSendBtn" style="height:auto;" onclick="sendCompareChatMessage()">Send</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        fetchCompareHighlights();
+
+    } catch (err) {
+        view.innerHTML = `<div class="empty-state" style="color:var(--bad)">Failed to initialize comparison: ${escapeHtml(err.message)}</div>`;
+    }
+};
+
+window.goBackToSearch = function() {
+    clearCompareSelection();
+    initDashboard();
+};
+
+async function fetchCompareHighlights() {
+    try {
+        const highlights = await API.post("/api/properties/compare/highlights", { property_ids: selectedCompareIds });
+        Object.keys(highlights).forEach(pid => {
+            const listEl = document.getElementById(`compAttrs_${pid}`);
+            if (listEl) {
+                const bullets = highlights[pid];
+                listEl.innerHTML = bullets.map(b => `
+                    <li style="font-size:0.8rem; color:var(--ink-soft); display:flex; align-items:flex-start; gap:6px; line-height:1.4;">
+                        <span style="color:var(--good); font-weight:bold;">✓</span>
+                        <span>${escapeHtml(b)}</span>
+                    </li>
+                `).join("");
+            }
+        });
+    } catch {
+        selectedCompareIds.forEach(pid => {
+            const listEl = document.getElementById(`compAttrs_${pid}`);
+            if (listEl) listEl.innerHTML = `<li style="font-size:0.8rem; color:var(--bad);">Could not load highlights.</li>`;
+        });
+    }
+}
+
+window.askCompareQuestion = function(question) {
+    const input = document.getElementById("compChatInput");
+    if (input) {
+        input.value = question;
+        sendCompareChatMessage();
+    }
+};
+
+window.sendCompareChatMessage = async function() {
+    const input = document.getElementById("compChatInput");
+    const sendBtn = document.getElementById("compChatSendBtn");
+    const chatContainer = document.getElementById("compChatMessages");
+    
+    if (!input || !sendBtn || !chatContainer) return;
+    
+    const message = input.value.trim();
+    if (!message) return;
+    
+    appendCompMessage("user", message);
+    input.value = "";
+    input.style.height = "auto";
+    
+    showCompTyping();
+    sendBtn.disabled = true;
+    
+    try {
+        const response = await API.post("/api/properties/compare/chat", {
+            property_ids: selectedCompareIds,
+            message: message,
+            history: compareChatHistory
+        });
+        
+        hideCompTyping();
+        appendCompMessage("assistant", response.reply);
+        
+        compareChatHistory.push({ role: "user", content: message });
+        compareChatHistory.push({ role: "assistant", content: response.reply });
+        if (compareChatHistory.length > 10) compareChatHistory.shift();
+
+    } catch (err) {
+        hideCompTyping();
+        appendCompMessage("assistant", "⚠️ Sorry, I ran into an error comparing the properties. Please try again.");
+    } finally {
+        sendBtn.disabled = false;
+        input.focus();
+    }
+};
+
+// Lightweight Markdown → HTML renderer for comparison chat AI responses
+function renderCompMarkdown(text) {
+    const lines = text.split('\n');
+    let html = '';
+    let inTable = false;
+    let tableHeaderDone = false;
+    let inList = false;
+    let i = 0;
+
+    function closePending() {
+        if (inTable) { html += '</tbody></table>'; inTable = false; tableHeaderDone = false; }
+        if (inList) { html += '</ul>'; inList = false; }
+    }
+
+    while (i < lines.length) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Blank line
+        if (!trimmed) {
+            closePending();
+            html += '<div style="height:6px"></div>';
+            i++; continue;
+        }
+
+        // Horizontal rule
+        if (/^---+$/.test(trimmed)) {
+            closePending();
+            html += '<hr class="comp-md-hr">';
+            i++; continue;
+        }
+
+        // Headers
+        const h3Match = trimmed.match(/^###\s+(.+)$/);
+        const h2Match = trimmed.match(/^##\s+(.+)$/);
+        const h1Match = trimmed.match(/^#\s+(.+)$/);
+        if (h3Match || h2Match || h1Match) {
+            closePending();
+            const content = inlineMarkdown(h3Match ? h3Match[1] : h2Match ? h2Match[1] : h1Match[1]);
+            const tag = h3Match ? 'h4' : h2Match ? 'h3' : 'h2';
+            const cls = h3Match ? 'comp-md-h3' : h2Match ? 'comp-md-h2' : 'comp-md-h1';
+            html += `<${tag} class="${cls}">${content}</${tag}>`;
+            i++; continue;
+        }
+
+        // Table row (starts with |)
+        if (trimmed.startsWith('|')) {
+            const cells = trimmed.split('|').map(c => c.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+            // Separator row (| --- | --- |)
+            if (cells.every(c => /^[-:]+$/.test(c))) {
+                tableHeaderDone = true;
+                i++; continue;
+            }
+            if (!inTable) {
+                closePending();
+                html += '<div class="comp-md-table-wrap"><table class="comp-md-table">';
+                inTable = true;
+                tableHeaderDone = false;
+            }
+            if (!tableHeaderDone) {
+                html += '<thead><tr>' + cells.map(c => `<th>${inlineMarkdown(c)}</th>`).join('') + '</tr></thead><tbody>';
+            } else {
+                html += '<tr>' + cells.map(c => `<td>${renderTableCell(c)}</td>`).join('') + '</tr>';
+            }
+            i++; continue;
+        }
+
+        // Close table if we were in one and this line isn't a table row
+        if (inTable) { html += '</tbody></table></div>'; inTable = false; tableHeaderDone = false; }
+
+        // Bullet list
+        const listMatch = trimmed.match(/^[*\-]\s+(.+)$/);
+        if (listMatch) {
+            if (!inList) { html += '<ul class="comp-md-list">'; inList = true; }
+            html += `<li>${inlineMarkdown(listMatch[1])}</li>`;
+            i++; continue;
+        }
+        if (inList) { html += '</ul>'; inList = false; }
+
+        // Plain paragraph
+        html += `<p class="comp-md-p">${inlineMarkdown(trimmed)}</p>`;
+        i++;
+    }
+
+    closePending();
+    return html;
+}
+
+function inlineMarkdown(text) {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code class="comp-md-code">$1</code>');
+}
+
+function renderTableCell(text) {
+    // Special: checkmarks / cross marks — upgrade lone ✓/✗ to badge
+    if (!text || text === '') return '<span class="comp-td-empty">—</span>';
+    const checked = text.match(/^[✓✔☑]$/);
+    const crossed = text.match(/^[✗✘☒x]$/i);
+    if (checked) return '<span class="comp-td-yes">✓</span>';
+    if (crossed) return '<span class="comp-td-no">✗</span>';
+    return inlineMarkdown(text);
+}
+
+function appendCompMessage(role, text) {
+    const container = document.getElementById("compChatMessages");
+    if (!container) return;
+    
+    const div = document.createElement("div");
+
+    if (role === "user") {
+        div.className = "comp-msg-user";
+        div.innerHTML = escapeHtml(text).replace(/\n/g, '<br>');
+    } else {
+        div.className = "comp-msg-ai";
+        div.innerHTML = renderCompMarkdown(text);
+    }
+    
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+function showCompTyping() {
+    const container = document.getElementById("compChatMessages");
+    if (!container) return;
+    
+    const div = document.createElement("div");
+    div.id = "compTypingIndicator";
+    div.className = "chat-msg chat-msg-theirs ai-typing";
+    div.style.alignSelf = "flex-start";
+    div.style.padding = "10px 14px";
+    div.innerHTML = '<span class="ai-typing-dot"></span><span class="ai-typing-dot"></span><span class="ai-typing-dot"></span>';
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+function hideCompTyping() {
+    const el = document.getElementById("compTypingIndicator");
+    if (el) el.remove();
+}
+
+async function renderPropertyDetailView(container, propertyId) {
+    container.innerHTML = `<div class="empty-state">Loading property details...</div>`;
+    try {
+        const [prop, reviews] = await Promise.all([
+            API.get(`/api/properties/${propertyId}`),
+            API.get(`/api/reviews/property/${propertyId}`)
+        ]);
+        
+        currentSelectedProperty = prop;
+        
+        const eyebrow = document.getElementById("dashboardEyebrow");
+        const heading = document.getElementById("dashboardHeading");
+        if (eyebrow) eyebrow.textContent = "Property Detail";
+        if (heading) heading.textContent = prop.name;
+        
+        const badgesHtml = prop.avg_rating >= 4.0 
+            ? `<span class="prop-badge">⭐ ${prop.avg_rating} (${prop.review_count} reviews)</span>` 
+            : `<span>No ratings yet</span>`;
+            
+        const images = prop.images || [];
+        let galleryHtml = "";
+        if (images.length > 0) {
+            galleryHtml = `
+                <div class="property-detail-gallery">
+                    <div class="gallery-main-img" onclick="openPropertyGallery('${prop.id}')" title="Click to view all photos">
+                        <img src="${escapeHtml(images[0])}" alt="${escapeHtml(prop.name)}">
+                    </div>
+                    <div class="gallery-sub-images">
+                        ${images.slice(1, 4).map(img => `
+                            <div class="gallery-sub-img" onclick="openPropertyGallery('${prop.id}')">
+                                <img src="${escapeHtml(img)}" alt="">
+                            </div>
+                        `).join("")}
+                        ${images.length > 4 ? `
+                            <div class="gallery-sub-img gallery-more-photos" onclick="openPropertyGallery('${prop.id}')">
+                                <span>+${images.length - 4} photos</span>
+                            </div>
+                        ` : ""}
+                    </div>
+                </div>
+            `;
+        } else {
+            galleryHtml = `<div class="thumb-placeholder" style="height: 200px; display:flex; align-items:center; justify-content:center; background: var(--gold-tint); border-radius: var(--radius-md);">No photos available</div>`;
+        }
+        
+        const amenitiesList = prop.amenities ? Object.keys(prop.amenities).filter(k => prop.amenities[k]) : [];
+        const amenitiesHtml = amenitiesList.length > 0
+            ? `<div class="prop-amenity-tags" style="display:flex; flex-wrap:wrap; gap:8px; margin:16px 0;">
+                ${amenitiesList.map(a => `<span class="badge badge-pending" style="background:#e3f2fd; color:#0d47a1; text-transform: capitalize; padding: 6px 12px; font-size:0.85rem;">${escapeHtml(a.replace('_', ' '))}</span>`).join("")}
+               </div>`
+            : `<p style="color:var(--ink-soft);">No amenities specified.</p>`;
+
+        let reviewsHtml = "";
+        if (reviews.length === 0) {
+            reviewsHtml = `<div class="empty-state">No reviews yet for this property.</div>`;
+        } else {
+            reviewsHtml = `
+                <div class="reviews-list-inline" style="margin-top: 20px; max-height: 400px; overflow-y: auto; padding-right: 8px;">
+                    ${reviews.map(r => `
+                        <div style="border-bottom:1px solid var(--line-soft); padding:14px 0;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                                <strong>${escapeHtml(r.customer_name || "Anonymous")}</strong>
+                                <span style="color:var(--accent); font-size:1rem;">${"★".repeat(r.rating)}${"☆".repeat(5 - r.rating)}</span>
+                            </div>
+                            ${r.comment ? `<p style="margin:6px 0; font-size:0.92rem;">${escapeHtml(r.comment)}</p>` : ""}
+                            <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.78rem; color:var(--ink-faint); font-family:'Space Mono',monospace; margin-top:6px;">
+                                <span>${new Date(r.created_at).toLocaleDateString()}</span>
+                            </div>
+                            ${r.rep_response ? `<div style="margin-top:8px; padding:10px 14px; background:var(--gold-tint); border-radius:var(--radius-sm); font-size:0.88rem;"><strong>Host response:</strong> ${escapeHtml(r.rep_response)}</div>` : ""}
+                        </div>
+                    `).join("")}
+                </div>
+            `;
+        }
+
+        let roomsHtml = "";
+        if (!prop.rooms || prop.rooms.length === 0) {
+            roomsHtml = `<div class="empty-state">No rooms available at this property.</div>`;
+        } else {
+            roomsHtml = `
+                <div class="room-pick-list" style="margin-top: 15px;">
+                    ${prop.rooms.map(r => `
+                        <div class="room-item">
+                            <div class="room-item-header">
+                                ${r.images && r.images.length > 0
+                                    ? `<div class="room-item-thumb" onclick="openPropertyGallery('${prop.id}', '${r.id}')" title="View photos"><img src="${escapeHtml(r.images[0])}" alt="${escapeHtml(r.room_type)}"></div>`
+                                    : `<div class="room-item-thumb placeholder">🛏️</div>`}
+                                <div style="flex:1">
+                                    <h5 style="margin-bottom:2px">${escapeHtml(r.room_type)}</h5>
+                                    <div class="room-details" style="margin-bottom:0">
+                                        <span>₹${r.base_price}/night</span>
+                                        <span>Capacity: ${r.capacity_adults} Adults ${r.capacity_children ? `, ${r.capacity_children} Children` : ""}</span>
+                                    </div>
+                                    ${r.room_amenities && Object.keys(r.room_amenities).length > 0 ? `
+                                        <div class="room-amenity-tags" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px;">
+                                            ${Object.keys(r.room_amenities).filter(k => r.room_amenities[k]).map(k => `<span class="badge badge-pending" style="background:#e3f2fd; color:#0d47a1; text-transform: capitalize; font-size:0.72rem; padding: 2px 6px;">${escapeHtml(k.replace('_', ' '))}</span>`).join('')}
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            </div>
+                            <button class="btn btn-secondary btn-small" onclick="openBookingModal('${prop.id}', '${r.id}')">Book Room</button>
+                        </div>
+                    `).join("")}
+                </div>
+            `;
+        }
+
+        container.innerHTML = `
+            <div class="property-detail-container" style="display:flex; flex-direction:column; gap:24px; margin-top:20px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                    <button class="btn btn-outline btn-small" onclick="goBackToDashboard()">&larr; Back to Search</button>
+                    ${badgesHtml}
+                </div>
+                
+                ${galleryHtml}
+                
+                <div class="property-detail-body" style="display:grid; grid-template-columns: 2fr 1fr; gap:32px; min-width:0;">
+                    <div class="detail-main-col">
+                        <section class="card" style="margin-bottom:20px; padding: 24px;">
+                            <h3>About the Property</h3>
+                            <p style="line-height:1.6; margin-top:12px;">${escapeHtml(prop.description || "No description provided.")}</p>
+                            <h4 style="margin-top:24px;">Address & Location</h4>
+                            <p style="color:var(--ink-soft); margin-top:8px;">📍 ${escapeHtml(prop.address)}</p>
+                        </section>
+                        
+                        <section class="card" style="padding: 24px;">
+                            <h3>Available Rooms</h3>
+                            ${roomsHtml}
+                        </section>
+                    </div>
+                    
+                    <div class="detail-side-col">
+                        <section class="card" style="margin-bottom:20px; padding: 20px;">
+                            <h3>Amenities</h3>
+                            ${amenitiesHtml}
+                        </section>
+                        
+                        <section class="card" style="padding: 20px;">
+                            <h3>Guest Reviews</h3>
+                            ${reviewsHtml}
+                        </section>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+    } catch (err) {
+        container.innerHTML = `<div class="empty-state" style="color:var(--bad)">Failed to load property details: ${escapeHtml(err.message)}</div>`;
+    }
 }
 
 // ==================== Customer Dashboard: search + book + history ====================
@@ -1072,7 +1617,12 @@ function renderSearchResults(properties) {
                 ${p.photo_count ? `<span class="photo-count-badge">📷 ${p.photo_count}</span>` : ""}
             </div>
             <h4>${escapeHtml(p.name)}</h4>
-            <div class="prop-type">${escapeHtml([p.city, p.district].filter(Boolean).join(", ") || "Location N/A")}${p.property_type ? " · " + escapeHtml(p.property_type) : ""}</div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <div class="prop-type">${escapeHtml([p.city, p.district].filter(Boolean).join(", ") || "Location N/A")}${p.property_type ? " · " + escapeHtml(p.property_type) : ""}</div>
+                <label class="compare-checkbox-label" style="font-size:0.75rem; color:var(--ink-soft); display:flex; align-items:center; gap:6px; cursor:pointer; font-family:'Space Mono',monospace;">
+                    <input type="checkbox" class="compare-checkbox" value="${p.id}" onchange="handleCompareCheckboxChange()" ${selectedCompareIds.includes(p.id) ? "checked" : ""}> Compare
+                </label>
+            </div>
             ${p.description ? `<p>${escapeHtml(p.description.slice(0, 110))}${p.description.length > 110 ? "…" : ""}</p>` : ""}
             ${p.badges && p.badges.length > 0 ? `<div class="prop-badges">${p.badges.map(b => `<span class="prop-badge">${b.icon} ${b.label}</span>`).join("")}</div>` : ""}
             ${p.ai_highlight ? `<div class="prop-ai-highlight">✨ ${escapeHtml(p.ai_highlight)}</div>` : ""}
@@ -1169,15 +1719,30 @@ async function openPropertyGallery(propertyId, focusRoomId) {
 }
 
 function openBookingModal(propertyId, roomId) {
-    const prop = lastSearchResults.find(p => p.id === propertyId);
+    let prop = lastSearchResults.find(p => p.id === propertyId);
+    if (!prop && currentSelectedProperty && currentSelectedProperty.id === propertyId) {
+        prop = currentSelectedProperty;
+    }
     if (!prop) return;
     const room = prop.rooms.find(r => r.id === roomId);
     if (!room) return;
 
-    const checkIn = document.getElementById("searchCheckIn").value;
-    const checkOut = document.getElementById("searchCheckOut").value;
-    const adults = parseInt(document.getElementById("searchAdults").value || "1");
-    const children = parseInt(document.getElementById("searchChildren").value || "0");
+    const checkIn = document.getElementById("searchCheckIn")?.value || new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const checkOut = document.getElementById("searchCheckOut")?.value || new Date(Date.now() + 172800000).toISOString().slice(0, 10);
+    const adults = parseInt(document.getElementById("searchAdults")?.value || "1");
+    const children = parseInt(document.getElementById("searchChildren")?.value || "0");
+
+    let nights = room.nights;
+    if (nights === undefined || nights === null) {
+        const d1 = new Date(checkIn);
+        const d2 = new Date(checkOut);
+        nights = Math.max(1, Math.round((d2 - d1) / (1000 * 60 * 60 * 24)));
+    }
+    
+    let total_price = room.total_price;
+    if (total_price === undefined || total_price === null) {
+        total_price = room.base_price * nights;
+    }
 
     const modal = document.createElement("div");
     modal.className = "modal-overlay";
@@ -1190,8 +1755,8 @@ function openBookingModal(propertyId, roomId) {
             <div class="room-details" style="margin-bottom:20px;">
                 <span>Adults: ${adults}</span>
                 <span>Children: ${children}</span>
-                <span>Nights: ${room.nights ?? "—"}</span>
-                <span>Total: ₹${room.total_price}</span>
+                <span>Nights: ${nights}</span>
+                <span>Total: ₹${total_price}</span>
             </div>
             <div id="bookingError" class="error-msg"></div>
             <button id="confirmBookingBtn" class="btn btn-primary btn-full">Confirm &amp; Book</button>
@@ -1217,7 +1782,11 @@ function openBookingModal(propertyId, roomId) {
             });
             modal.remove();
             loadMyBookings();
-            runPropertySearch(); // refresh availability now that a unit is taken
+            if (document.getElementById("searchResults")) {
+                runPropertySearch(); // refresh availability if search list is active
+            } else {
+                renderPropertyDetailView(document.getElementById("dashboardView"), propertyId); // refresh detail view instead
+            }
         } catch (err) {
             errDiv.style.display = "block";
             errDiv.textContent = err.message;

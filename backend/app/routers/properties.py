@@ -279,4 +279,148 @@ def list_property_documents_public(property_id: uuid.UUID, db: Session = Depends
     ]
 
 
+from pydantic import BaseModel
+from app.llm import ask_llm
+
+class CompareHighlightsRequest(BaseModel):
+    property_ids: list[uuid.UUID]
+
+
+@router.post("/compare/highlights")
+def get_compare_highlights(req: CompareHighlightsRequest, db: Session = Depends(get_db)):
+    results = {}
+    for pid in req.property_ids:
+        prop = db.query(Property).filter(Property.id == pid).first()
+        if not prop:
+            continue
+        
+        # Get reviews
+        from app.models import Review
+        reviews = db.query(Review).filter(Review.property_id == pid).limit(5).all()
+        reviews_text = "\n".join([f"- Rating: {r.rating}, Comment: {r.comment}" for r in reviews])
+        
+        # Get property details
+        city_name = prop.city.name if prop.city else "Unknown"
+        amenities_list = [k.replace('_', ' ') for k, v in (prop.amenities or {}).items() if v]
+        
+        system = """You are an expert hospitality assistant. Extract exactly 3 or 4 compelling, distinct bullet points ("selling points" or "attributes") for the given hotel property.
+These points should highlight why a traveler would want to choose this stay.
+Use the property description, list of amenities, and customer reviews to find specific, accurate, and unique highlights (e.g. "Stunning mountain views", "Excellent homemade breakfast according to guest reviews", "Highly praised free high-speed WiFi", "Located in prime tourist district").
+Do NOT use generic bullets. Keep each bullet point short, punchy, and under 12 words. Do not include markdown bold or numbering. Just print the lines."""
+        
+        user_message = f"Property Name: {prop.name}\nCity: {city_name}\nDescription: {prop.description}\nAmenities: {', '.join(amenities_list)}\nReviews:\n{reviews_text}"
+        
+        reply = ask_llm(system, [{"role": "user", "content": user_message}])
+        
+        bullets = [b.strip("-* ").strip() for b in reply.strip().split("\n") if b.strip()]
+        if not bullets or len(bullets) < 2:
+            bullets = [
+                f"Rated {prop.avg_rating} stars by guests",
+                f"Features {', '.join(amenities_list[:3])}",
+                f"Located in beautiful {city_name}"
+            ]
+        results[str(pid)] = bullets[:4]
+        
+    return results
+
+
+class CompareChatRequest(BaseModel):
+    property_ids: list[uuid.UUID]
+    message: str
+    history: list[dict] = []
+
+
+@router.post("/compare/chat")
+def compare_chat(req: CompareChatRequest, db: Session = Depends(get_db)):
+    properties_info = []
+    prop_names = []
+    for pid in req.property_ids:
+        prop = db.query(Property).filter(Property.id == pid).first()
+        if prop:
+            properties_info.append(prop)
+            prop_names.append(prop.name)
+            
+    if not properties_info:
+        raise HTTPException(status_code=400, detail="No valid properties provided")
+
+    from app.embeddings import embed_text
+    from app.models import DocumentChunk
+    
+    query_vec = embed_text(req.message)
+
+    # Fetch document chunks belonging only to the compared properties using ORM in_()
+    all_chunks = (
+        db.query(DocumentChunk)
+        .filter(
+            DocumentChunk.property_id.in_(req.property_ids),
+            DocumentChunk.embedding.is_not(None),
+        )
+        .all()
+    )
+
+    # Sort by vector distance in Python (fallback when ORM ordering is tricky with pgvector)
+    from pgvector.sqlalchemy import Vector
+    import numpy as np
+
+    def cosine_distance(chunk):
+        try:
+            q = np.array(query_vec, dtype=np.float32)
+            c = np.array(chunk.embedding, dtype=np.float32)
+            if np.linalg.norm(q) == 0 or np.linalg.norm(c) == 0:
+                return 1.0
+            return 1.0 - float(np.dot(q, c) / (np.linalg.norm(q) * np.linalg.norm(c)))
+        except Exception:
+            return 1.0
+
+    sorted_chunks = sorted(all_chunks, key=cosine_distance)[:6]
+
+    docs_context = []
+    for chunk in sorted_chunks:
+        prop_name = next((p.name for p in properties_info if p.id == chunk.property_id), "Unknown Stay")
+        docs_context.append(f"[Source Document for {prop_name}]: {chunk.content}")
+        
+    formatted_docs = "\n\n".join(docs_context) if docs_context else "No document snippets found for these properties."
+
+    properties_summary = ""
+    for p in properties_info:
+        city_name = p.city.name if p.city else "Unknown"
+        # Build full amenity map: present ✓ / absent ✗
+        amenities_map = p.amenities or {}
+        amenity_lines = "\n".join(
+            f"  {'✓' if v else '✗'} {k.replace('_', ' ').title()}"
+            for k, v in amenities_map.items()
+        ) if amenities_map else "  No amenity data available."
+        properties_summary += f"""
+---
+Property: {p.name} (ID: {p.id})
+Type: {p.property_type.value if p.property_type else 'hotel'}
+City: {city_name}
+Address: {p.address}
+Rating: {p.avg_rating} ({p.review_count} reviews)
+Amenities (full list, ✓ = present, ✗ = not available):
+{amenity_lines}
+Description: {p.description}
+"""
+
+    system_prompt = f"""You are a specialized AI travel concierge helping a customer choose between the following properties:
+{properties_summary}
+
+Use these relevant document snippets retrieved from their files to help answer the user's question:
+{formatted_docs}
+
+Compare the properties fairly based on the user's query. Follow these STRICT formatting rules:
+1. Focus only on the properties being compared: {", ".join(prop_names)}.
+2. When showing a comparison table, EVERY cell that represents a yes/no or present/absent value MUST contain ONLY the ✓ symbol (if available/yes) or the ✗ symbol (if not available/no). Never use empty cells, dashes, or blanks.
+3. Use the amenity data above as the ground truth — do not guess or leave cells empty.
+4. Use markdown tables for side-by-side feature comparisons, and bullet points for nuanced trade-offs.
+5. Be objective, highlighting the strengths and trade-offs of each.
+6. Keep the answer concise and directly address the question.
+7. Always respond in a friendly, helpful tone.
+"""
+
+    reply = ask_llm(system_prompt, req.history)
+    return {"reply": reply}
+
+
+
 

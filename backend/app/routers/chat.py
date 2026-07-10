@@ -79,7 +79,7 @@ def _search_docs(query: str, db: Session, limit: int = 5) -> list[dict]:
     query_vec = embed_text(query)
     sql = text("""
         SELECT
-            dc.content, dc.document_id,
+            dc.content, dc.document_id, dc.property_id,
             dc.embedding <=> CAST(:query_vec AS vector) AS distance
         FROM document_chunks dc
         WHERE dc.embedding IS NOT NULL
@@ -96,6 +96,7 @@ def _search_docs(query: str, db: Session, limit: int = 5) -> list[dict]:
             "content": row.content,
             "distance": row.distance,
             "source": doc.title if doc else "Unknown",
+            "property_id": str(row.property_id) if row.property_id else (str(doc.property_id) if doc else None)
         })
     return results
 
@@ -158,7 +159,29 @@ def chat(
 
     # Format docs and call LLM
     formatted_docs = _format_docs(docs)
-    system = SYSTEM_PROMPT.format(docs=formatted_docs)
+    
+    # Retrieve properties info for references
+    from app.models import Property
+    property_ids = set()
+    for d in docs:
+        if d.get("property_id"):
+            property_ids.add(d["property_id"])
+            
+    properties_info = []
+    for pid in property_ids:
+        prop = db.query(Property).filter(Property.id == uuid.UUID(pid)).first()
+        if prop and prop.is_approved and prop.is_active:
+            properties_info.append(prop)
+            
+    props_instruction = ""
+    if properties_info:
+        props_instruction += "\nYou have access to the following properties relevant to the search:\n"
+        for p in properties_info:
+            city_name = p.city.name if p.city else "Unknown Location"
+            props_instruction += f"- ID: {p.id}, Name: {p.name}, Type: {p.property_type.value if p.property_type else 'hotel'}, City: city_name, Avg Rating: {p.avg_rating}\n"
+        props_instruction += "\nCRITICAL: Whenever you recommend, suggest, or discuss any of the above properties to the user, you MUST include the text markup `[PropertyCard: <property_id>]` (using the exact UUID from the list) directly in your response so the system can render a clickable card. For example: 'I suggest staying at the Grand Plaza: [PropertyCard: 123e4567-e89b-12d3-a456-426614174000].'"
+
+    system = SYSTEM_PROMPT.format(docs=formatted_docs) + props_instruction
     reply = ask_llm(system, messages)
 
     # Save assistant message
@@ -180,3 +203,4 @@ def chat(
         session_id=str(session.id),
         conversation_title=session.title if is_new else None,
     )
+

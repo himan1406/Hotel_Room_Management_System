@@ -143,8 +143,28 @@
 
         const body = document.createElement("div");
         body.className = "chat-msg-body";
-        body.innerHTML = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+        
+        let formattedText = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+        
+        // Extract property IDs and remove them from the chat bubble text
+        const propertyIds = [];
+        formattedText = formattedText.replace(/\[PropertyCard:\s*([a-f0-9\-]{36})\]/gi, (match, propId) => {
+            propertyIds.push(propId);
+            return "";
+        });
+        
+        // Clean up trailing linebreaks/spaces in bubble text
+        body.innerHTML = formattedText.trim().replace(/(<br>\s*)+$/g, '');
         div.appendChild(body);
+
+        // Append placeholders outside the bubble but inside the message block
+        propertyIds.forEach(propId => {
+            const placeholder = document.createElement("div");
+            placeholder.className = "chat-property-card-placeholder";
+            placeholder.setAttribute("data-property-id", propId);
+            placeholder.innerHTML = `<div class="chat-prop-card-loading">Loading property info...</div>`;
+            div.appendChild(placeholder);
+        });
 
         if (sources && sources.length > 0 && role === "assistant") {
             const srcDiv = document.createElement("div");
@@ -160,6 +180,45 @@
 
         container.appendChild(div);
         container.scrollTop = container.scrollHeight;
+
+        // Load property cards if any placeholders exist
+        div.querySelectorAll(".chat-property-card-placeholder").forEach(async (placeholder) => {
+            const propId = placeholder.getAttribute("data-property-id");
+            try {
+                const res = await fetch(`/api/properties/${propId}`);
+                if (!res.ok) throw new Error("Failed to load");
+                const prop = await res.json();
+                
+                const thumbnailHtml = prop.images && prop.images.length > 0
+                    ? `<img src="${prop.images[0]}" class="chat-prop-card-thumb" alt="${prop.name}">`
+                    : `<div class="chat-prop-card-thumb-placeholder">🏨</div>`;
+                
+                const minPrice = prop.rooms && prop.rooms.length > 0
+                    ? Math.min(...prop.rooms.map(r => r.base_price))
+                    : null;
+                const priceHtml = minPrice !== null ? `<span class="chat-prop-card-price">From ₹${minPrice}/night</span>` : "";
+                
+                placeholder.innerHTML = `
+                    <div class="chat-prop-card" onclick="window.showPropertyInDashboard('${prop.id}')" title="Click to view details in dashboard">
+                        ${thumbnailHtml}
+                        <div class="chat-prop-card-details">
+                            <h5 class="chat-prop-card-title">${prop.name}</h5>
+                            <div class="chat-prop-card-meta">
+                                <span>📍 ${[prop.city, prop.district].filter(Boolean).join(", ") || "Location N/A"}</span>
+                                <span>⭐ ${prop.avg_rating || "0.0"} (${prop.review_count})</span>
+                            </div>
+                            <div class="chat-prop-card-footer">
+                                ${priceHtml}
+                                <span class="chat-prop-card-action">View details →</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                placeholder.innerHTML = `<div class="chat-prop-card-error">⚠️ Property info unavailable</div>`;
+            }
+            container.scrollTop = container.scrollHeight;
+        });
     }
 
     function showAITyping() {
