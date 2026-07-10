@@ -142,6 +142,7 @@ function updateNav(user) {
 
 async function logout() {
     disconnectWebSocket();
+    localStorage.removeItem("ai_chat_session_id");
     await API.post("/api/auth/logout");
     window.location.href = "/";
 }
@@ -781,6 +782,7 @@ document.addEventListener("DOMContentLoaded", () => {
 let currentSelectedProperty = null;
 let selectedCompareIds = [];
 let compareChatHistory = [];
+let comparisonContext = null;
 
 async function initDashboard() {
     const user = await checkAuth();
@@ -796,7 +798,24 @@ async function initDashboard() {
     if (user.role === "customer") {
         if (eyebrow) eyebrow.textContent = "Traveler Dashboard";
         if (heading) heading.textContent = "Find your next stay";
-        
+
+        // Restore comparison view after a page refresh
+        const savedCompareIds = sessionStorage.getItem("compareIds");
+        const savedCompareActive = sessionStorage.getItem("compareViewActive");
+        if (savedCompareActive === "1" && savedCompareIds) {
+            try {
+                const ids = JSON.parse(savedCompareIds);
+                if (Array.isArray(ids) && ids.length >= 2) {
+                    selectedCompareIds = ids;
+                    startCompareView();
+                    return;
+                }
+            } catch (e) {
+                sessionStorage.removeItem("compareIds");
+                sessionStorage.removeItem("compareViewActive");
+            }
+        }
+
         const urlParams = new URLSearchParams(window.location.search);
         const propId = urlParams.get("property_id");
         if (propId) {
@@ -820,13 +839,16 @@ async function initDashboard() {
     renderHotelRepDashboard(view, user);
 }
 
-window.showPropertyInDashboard = function(propertyId) {
+window.showPropertyInDashboard = function(propertyId, fromComparison) {
     if (window.location.pathname !== "/dashboard") {
         window.location.href = `/dashboard?property_id=${propertyId}`;
         return;
     }
     
-    // Close the chatbot panel so they can see the dashboard clearly
+    if (fromComparison && selectedCompareIds.length > 0) {
+        comparisonContext = [...selectedCompareIds];
+    }
+
     const aiChatPanel = document.getElementById("aiChatPanel");
     if (aiChatPanel) {
         aiChatPanel.style.display = "none";
@@ -844,12 +866,35 @@ window.goBackToDashboard = function() {
     const url = new URL(window.location);
     url.searchParams.delete("property_id");
     window.history.replaceState({}, "", url);
+    comparisonContext = null;
     initDashboard();
 };
 
-window.handleCompareCheckboxChange = function() {
-    const checkboxes = document.querySelectorAll(".compare-checkbox:checked");
-    selectedCompareIds = Array.from(checkboxes).map(cb => cb.value);
+window.goBackToComparison = function() {
+    const view = document.getElementById("dashboardView");
+    if (comparisonContext && comparisonContext.length >= 2) {
+        selectedCompareIds = [...comparisonContext];
+        comparisonContext = null;
+        const url = new URL(window.location);
+        url.searchParams.delete("property_id");
+        window.history.replaceState({}, "", url);
+        startCompareView();
+    } else {
+        window.goBackToDashboard();
+    }
+};
+
+window.handleCompareUpdate = function() {
+    document.querySelectorAll(".compare-toggle-btn[data-property-id]").forEach(btn => {
+        const pid = btn.getAttribute("data-property-id");
+        const isComparing = selectedCompareIds.includes(pid);
+        btn.classList.toggle("compare-toggle-active", isComparing);
+        btn.innerHTML = isComparing ? "&#10003; Comparing" : "&#43; Compare";
+    });
+    document.querySelectorAll(".property-card[data-property-id]").forEach(card => {
+        const pid = card.getAttribute("data-property-id");
+        card.classList.toggle("property-card-compared", selectedCompareIds.includes(pid));
+    });
     
     let bar = document.getElementById("compareFloatingBar");
     if (selectedCompareIds.length > 0) {
@@ -878,8 +923,43 @@ window.handleCompareCheckboxChange = function() {
 };
 
 window.clearCompareSelection = function() {
-    document.querySelectorAll(".compare-checkbox").forEach(cb => cb.checked = false);
-    window.handleCompareCheckboxChange();
+    selectedCompareIds = [];
+    sessionStorage.removeItem("compareIds");
+    sessionStorage.removeItem("compareViewActive");
+    document.querySelectorAll(".compare-toggle-btn").forEach(btn => {
+        btn.classList.remove("compare-toggle-active");
+        btn.innerHTML = "&#43; Compare";
+    });
+    document.querySelectorAll(".property-card-compared").forEach(card => {
+        card.classList.remove("property-card-compared");
+    });
+    window.handleCompareUpdate();
+};
+
+window.toggleCompareFromDetail = function(propertyId) {
+    const idx = selectedCompareIds.indexOf(propertyId);
+    if (idx > -1) {
+        selectedCompareIds.splice(idx, 1);
+    } else {
+        selectedCompareIds.push(propertyId);
+    }
+    window.handleCompareUpdate();
+    const btn = document.querySelector(".compare-toggle-btn");
+    if (btn) {
+        const isComparing = selectedCompareIds.includes(propertyId);
+        btn.className = "compare-toggle-btn" + (isComparing ? " compare-toggle-active" : "");
+        btn.innerHTML = isComparing ? "&#10003; Comparing" : "&#43; Compare";
+    }
+};
+
+window.toggleCompareFromSearch = function(propertyId) {
+    const idx = selectedCompareIds.indexOf(propertyId);
+    if (idx > -1) {
+        selectedCompareIds.splice(idx, 1);
+    } else {
+        selectedCompareIds.push(propertyId);
+    }
+    window.handleCompareUpdate();
 };
 
 window.startCompareView = async function() {
@@ -888,10 +968,14 @@ window.startCompareView = async function() {
         bar.classList.remove("open");
         setTimeout(() => bar.remove(), 200);
     }
-    
+
     const view = document.getElementById("dashboardView");
     if (!view) return;
-    
+
+    // Persist compare state so a page refresh restores this view
+    sessionStorage.setItem("compareIds", JSON.stringify(selectedCompareIds));
+    sessionStorage.setItem("compareViewActive", "1");
+
     const url = new URL(window.location);
     url.searchParams.delete("property_id");
     window.history.replaceState({}, "", url);
@@ -923,7 +1007,7 @@ window.startCompareView = async function() {
                         const priceStr = minPrice ? `From ₹${minPrice}/night` : "Price N/A";
                         const thumbnail = p.images && p.images.length > 0 ? p.images[0] : "";
                         return `
-                            <div class="card comparison-prop-card" id="compCard_${p.id}" style="padding:20px; display:flex; flex-direction:column; gap:12px;">
+                            <div class="card comparison-prop-card" id="compCard_${p.id}" style="padding:20px; display:flex; flex-direction:column; gap:12px; cursor:pointer;" onclick="showPropertyInDashboard('${p.id}', true)">
                                 <div class="comp-prop-thumb" style="height:140px; border-radius:var(--radius-md); overflow:hidden; background:var(--gold-tint);">
                                     ${thumbnail ? `<img src="${escapeHtml(thumbnail)}" alt="${escapeHtml(p.name)}" style="width:100%; height:100%; object-fit:cover;">` : `<div style="height:100%; display:flex; align-items:center; justify-content:center; font-size:2rem;">🏨</div>`}
                                 </div>
@@ -983,6 +1067,8 @@ window.startCompareView = async function() {
 };
 
 window.goBackToSearch = function() {
+    sessionStorage.removeItem("compareIds");
+    sessionStorage.removeItem("compareViewActive");
     clearCompareSelection();
     initDashboard();
 };
@@ -1046,7 +1132,11 @@ window.sendCompareChatMessage = async function() {
         appendCompMessage("assistant", response.reply);
         
         compareChatHistory.push({ role: "user", content: message });
-        compareChatHistory.push({ role: "assistant", content: response.reply });
+        const assistantEntry = { role: "assistant", content: response.reply };
+        if (response.reasoning_details) {
+            assistantEntry.reasoning_details = response.reasoning_details;
+        }
+        compareChatHistory.push(assistantEntry);
         if (compareChatHistory.length > 10) compareChatHistory.shift();
 
     } catch (err) {
@@ -1310,11 +1400,24 @@ async function renderPropertyDetailView(container, propertyId) {
             `;
         }
 
+        const backBtnHtml = comparisonContext
+            ? `<button class="btn btn-outline btn-small" onclick="goBackToComparison()">&larr; Back to Comparison</button>`
+            : `<button class="btn btn-outline btn-small" onclick="goBackToDashboard()">&larr; Back to Search</button>`;
+
+        const isComparing = selectedCompareIds.includes(prop.id);
+        const compareToggleHtml = `
+            <button class="compare-toggle-btn ${isComparing ? 'compare-toggle-active' : ''}" onclick="toggleCompareFromDetail('${prop.id}')">
+                ${isComparing ? '&#10003; Comparing' : '&#43; Compare'}
+            </button>`;
+
         container.innerHTML = `
             <div class="property-detail-container" style="display:flex; flex-direction:column; gap:24px; margin-top:20px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-                    <button class="btn btn-outline btn-small" onclick="goBackToDashboard()">&larr; Back to Search</button>
-                    ${badgesHtml}
+                    ${backBtnHtml}
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        ${compareToggleHtml}
+                        ${badgesHtml}
+                    </div>
                 </div>
                 
                 ${galleryHtml}
@@ -1475,6 +1578,46 @@ async function renderCustomerDashboard(container, user) {
     });
 
     initSearchAutocomplete();
+
+    // Restore search state from URL params (survives page refresh)
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("searched") === "1") {
+        const locVal = urlParams.get("location") || "";
+        if (locVal) document.getElementById("searchLocation").value = locVal;
+
+        const checkIn = urlParams.get("check_in");
+        const checkOut = urlParams.get("check_out");
+        if (checkIn) document.getElementById("searchCheckIn").value = checkIn;
+        if (checkOut) document.getElementById("searchCheckOut").value = checkOut;
+
+        const adults = urlParams.get("adults");
+        if (adults) document.getElementById("searchAdults").value = adults;
+        const children = urlParams.get("children");
+        if (children) document.getElementById("searchChildren").value = children;
+
+        // Filters
+        const maxPrice = urlParams.get("max_price");
+        if (maxPrice) {
+            document.getElementById("filterPriceRange").value = maxPrice;
+            document.getElementById("filterPriceLabel").textContent = maxPrice;
+        }
+        const minRating = urlParams.get("min_rating");
+        if (minRating) document.getElementById("filterMinRating").value = minRating;
+        const propType = urlParams.get("property_type");
+        if (propType) document.getElementById("filterPropertyType").value = propType;
+        const sortBy = urlParams.get("sort_by");
+        if (sortBy) document.getElementById("filterSortBy").value = sortBy;
+        const amenities = urlParams.getAll("amenities");
+        if (amenities.length) {
+            document.querySelectorAll('input[name="filterAmenity"]').forEach(cb => {
+                cb.checked = amenities.includes(cb.value);
+            });
+        }
+
+        // Show filters and re-run the search automatically
+        document.getElementById("filterPanel").style.display = "block";
+        runPropertySearch();
+    }
 }
 
 function initSearchAutocomplete() {
@@ -1573,6 +1716,12 @@ async function runPropertySearch() {
     const amenityCbs = document.querySelectorAll('input[name="filterAmenity"]:checked');
     amenityCbs.forEach(cb => params.append("amenities", cb.value));
 
+    // Persist search state in the URL so a page refresh restores the results
+    params.set("searched", "1");
+    const newUrl = new URL(window.location);
+    newUrl.search = params.toString();
+    window.history.replaceState({}, "", newUrl);
+
     resultsDiv.innerHTML = `<div class="empty-state">Searching…</div>`;
 
     // Show filter panel on first search
@@ -1608,8 +1757,10 @@ function renderSearchResults(properties) {
         return;
     }
 
-    resultsDiv.innerHTML = `<div class="property-list">` + properties.map(p => `
-        <div class="property-card">
+    resultsDiv.innerHTML = `<div class="property-list">` + properties.map(p => {
+        const isComparing = selectedCompareIds.includes(p.id);
+        return `
+        <div class="property-card ${isComparing ? 'property-card-compared' : ''}" data-property-id="${p.id}">
             <div class="property-thumb" onclick="openPropertyGallery('${p.id}')" title="View photos">
                 ${p.thumbnail
                     ? `<img src="${escapeHtml(p.thumbnail)}" alt="${escapeHtml(p.name)}">`
@@ -1619,9 +1770,9 @@ function renderSearchResults(properties) {
             <h4>${escapeHtml(p.name)}</h4>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                 <div class="prop-type">${escapeHtml([p.city, p.district].filter(Boolean).join(", ") || "Location N/A")}${p.property_type ? " · " + escapeHtml(p.property_type) : ""}</div>
-                <label class="compare-checkbox-label" style="font-size:0.75rem; color:var(--ink-soft); display:flex; align-items:center; gap:6px; cursor:pointer; font-family:'Space Mono',monospace;">
-                    <input type="checkbox" class="compare-checkbox" value="${p.id}" onchange="handleCompareCheckboxChange()" ${selectedCompareIds.includes(p.id) ? "checked" : ""}> Compare
-                </label>
+                <button class="compare-toggle-btn ${isComparing ? 'compare-toggle-active' : ''}" data-property-id="${p.id}" onclick="toggleCompareFromSearch('${p.id}')">
+                    ${isComparing ? '&#10003; Comparing' : '&#43; Compare'}
+                </button>
             </div>
             ${p.description ? `<p>${escapeHtml(p.description.slice(0, 110))}${p.description.length > 110 ? "…" : ""}</p>` : ""}
             ${p.badges && p.badges.length > 0 ? `<div class="prop-badges">${p.badges.map(b => `<span class="prop-badge">${b.icon} ${b.label}</span>`).join("")}</div>` : ""}
@@ -1653,7 +1804,8 @@ function renderSearchResults(properties) {
                 <button class="btn btn-secondary btn-small" onclick="contactHost('${p.id}')">Contact Host</button>
             </div>
         </div>
-    `).join("") + `</div>`;
+        `;
+    }).join("") + `</div>`;
 }
 
 // ==================== Photo gallery (lightbox) ====================
@@ -2458,7 +2610,7 @@ async function managePropertyDocuments(propertyId) {
                 </div>
                 <div class="form-group">
                     <label>File (PDF, image, or document)</label>
-                    <input type="file" id="docFile" accept=".pdf,.jpg,.jpeg,.png,.txt">
+                    <input type="file" id="docFile" accept=".pdf,.jpg,.jpeg,.png,.txt,.doc,.docx">
                 </div>
                 <div id="docUploadError" class="error-msg"></div>
                 <button type="submit" class="btn btn-primary btn-full">Upload Document</button>
@@ -2533,11 +2685,9 @@ async function deleteDocument(propertyId, documentId) {
     try {
         await API.del(`/api/hotels/${propertyId}/documents/${documentId}`);
         // Re-fetch the document list
-        const modal = document.querySelector(".modal-overlay");
-        if (modal) {
+        const container = document.getElementById("docList");
+        if (container) {
             const docs = await API.get(`/api/hotels/${propertyId}/documents`);
-            const container = document.getElementById("docList");
-            if (!container) return;
             if (docs.length === 0) {
                 container.innerHTML = `<div class="empty-state" style="padding:12px">No documents yet.</div>`;
                 return;

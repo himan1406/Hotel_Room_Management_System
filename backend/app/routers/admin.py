@@ -1,4 +1,4 @@
-﻿import os
+import os
 import uuid
 import base64
 
@@ -176,7 +176,7 @@ def toggle_rep_status(
 
 @router.get("/properties")
 def list_properties(
-    status: str = Query("all", regex="^(all|pending|approved)$"),
+    status: str = Query("all", pattern="^(all|pending|approved)$"),
     q: str = Query("", max_length=200),
     rep_id: uuid.UUID = None,
     db: Session = Depends(get_db),

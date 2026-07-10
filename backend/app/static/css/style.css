@@ -1763,6 +1763,7 @@ tbody tr:hover td { background: var(--paper); }
 /* ── Comparison Grid Cards ── */
 .comparison-prop-card {
     position: relative;
+    cursor: pointer;
     transition: transform var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
 }
 .comparison-prop-card:hover {
@@ -1806,13 +1807,38 @@ tbody tr:hover td { background: var(--paper); }
     }
 }
 
-/* ── Compare checkbox ── */
-.compare-checkbox {
-    accent-color: var(--accent);
-    width: 14px;
-    height: 14px;
+/* ── Compare toggle button ── */
+.compare-toggle-btn {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.72rem;
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-soft);
     cursor: pointer;
-    flex-shrink: 0;
+    transition: all var(--fast) var(--ease);
+    white-space: nowrap;
+    line-height: 1.4;
+}
+.compare-toggle-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.compare-toggle-btn.compare-toggle-active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+.compare-toggle-btn.compare-toggle-active:hover {
+    background: color-mix(in srgb, var(--accent) 85%, #000);
+    color: #fff;
+}
+
+/* ── Property card selected for comparison ── */
+.property-card-compared {
+    border-left: 3px solid var(--accent) !important;
+    background: color-mix(in srgb, var(--accent) 3%, var(--surface));
 }
 
 /* ══════════════════════════════════════════

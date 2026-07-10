@@ -485,7 +485,7 @@ async def upload_property_document(
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
 
-    ALLOWED_DOC_TYPES = {"cancellation_policy", "house_rules", "local_guide", "other"}
+    ALLOWED_DOC_TYPES = {"cancellation_policy", "house_rules", "transportation", "local_guide", "other"}
     if doc_type not in ALLOWED_DOC_TYPES:
         raise HTTPException(status_code=400, detail=f"Invalid doc_type. Allowed: {', '.join(sorted(ALLOWED_DOC_TYPES))}")
 

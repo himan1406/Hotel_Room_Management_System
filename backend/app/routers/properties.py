@@ -6,11 +6,11 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import or_, text as sa_text
 from sqlalchemy.orm import Session, aliased
 
 from app.database import get_db
-from app.models import Location, Property, Room, User, PropertyDocument
+from app.models import DocType, Location, Property, Room, User, PropertyDocument
 from app.availability import evaluate_room_for_dates
 
 router = APIRouter(prefix="/api/properties", tags=["properties"])
@@ -59,12 +59,12 @@ def search_properties(
     check_out: date | None = Query(None),
     adults: int = Query(1, ge=1),
     children: int = Query(0, ge=0),
-    property_type: str | None = Query(None, regex="^(hotel|villa|homestay|resort)$"),
+    property_type: str | None = Query(None, pattern="^(hotel|villa|homestay|resort)$"),
     amenities: list[str] = Query([], description="Required amenities (e.g. wifi, pool)"),
     min_price: float | None = Query(None, ge=0, description="Minimum room price per night"),
     max_price: float | None = Query(None, ge=0, description="Maximum room price per night"),
     min_rating: float | None = Query(None, ge=0, le=5, description="Minimum average rating"),
-    sort_by: str = Query("trending", regex="^(trending|price_asc|price_desc|rating_desc)$"),
+    sort_by: str = Query("trending", pattern="^(trending|price_asc|price_desc|rating_desc)$"),
     skip: int = Query(0, ge=0, description="Number of results to skip (for pagination)"),
     limit: int = Query(20, ge=1, le=100, description="Maximum number of results to return"),
     db: Session = Depends(get_db),
@@ -306,11 +306,11 @@ def get_compare_highlights(req: CompareHighlightsRequest, db: Session = Depends(
         system = """You are an expert hospitality assistant. Extract exactly 3 or 4 compelling, distinct bullet points ("selling points" or "attributes") for the given hotel property.
 These points should highlight why a traveler would want to choose this stay.
 Use the property description, list of amenities, and customer reviews to find specific, accurate, and unique highlights (e.g. "Stunning mountain views", "Excellent homemade breakfast according to guest reviews", "Highly praised free high-speed WiFi", "Located in prime tourist district").
-Do NOT use generic bullets. Keep each bullet point short, punchy, and under 12 words. Do not include markdown bold or numbering. Just print the lines."""
+Do NOT use generic bullets. Keep each bullet point short, punchy, and under 12 words. Do not include markdown bold or numbering. Just print the lines. Make Sure that each points of a property is different from the other property's"""
         
         user_message = f"Property Name: {prop.name}\nCity: {city_name}\nDescription: {prop.description}\nAmenities: {', '.join(amenities_list)}\nReviews:\n{reviews_text}"
         
-        reply = ask_llm(system, [{"role": "user", "content": user_message}])
+        reply, _ = ask_llm(system, [{"role": "user", "content": user_message}])
         
         bullets = [b.strip("-* ").strip() for b in reply.strip().split("\n") if b.strip()]
         if not bullets or len(bullets) < 2:
@@ -324,14 +324,19 @@ Do NOT use generic bullets. Keep each bullet point short, punchy, and under 12 w
     return results
 
 
+COMPARE_VALID_DOC_TYPES = {t.value for t in DocType}
+
+
 class CompareChatRequest(BaseModel):
     property_ids: list[uuid.UUID]
     message: str
     history: list[dict] = []
+    doc_type: str | None = None
 
 
 @router.post("/compare/chat")
 def compare_chat(req: CompareChatRequest, db: Session = Depends(get_db)):
+    # Fetch the properties being compared
     properties_info = []
     prop_names = []
     for pid in req.property_ids:
@@ -343,69 +348,116 @@ def compare_chat(req: CompareChatRequest, db: Session = Depends(get_db)):
     if not properties_info:
         raise HTTPException(status_code=400, detail="No valid properties provided")
 
+    if req.doc_type is not None and req.doc_type not in COMPARE_VALID_DOC_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid doc_type '{req.doc_type}'. Must be one of: {', '.join(sorted(COMPARE_VALID_DOC_TYPES))}"
+        )
+
     from app.embeddings import embed_text
-    from app.models import DocumentChunk
-    
+
     query_vec = embed_text(req.message)
 
-    # Fetch document chunks belonging only to the compared properties using ORM in_()
-    all_chunks = (
-        db.query(DocumentChunk)
-        .filter(
-            DocumentChunk.property_id.in_(req.property_ids),
-            DocumentChunk.embedding.is_not(None),
-        )
-        .all()
-    )
+    # Convert property_ids to a list of string representations for the SQL IN clause
+    prop_id_strs = [str(pid) for pid in req.property_ids]
+    placeholders = ", ".join([f"CAST(:pid_{i} AS uuid)" for i in range(len(prop_id_strs))])
 
-    # Sort by vector distance in Python (fallback when ORM ordering is tricky with pgvector)
-    from pgvector.sqlalchemy import Vector
-    import numpy as np
+    params: dict = {"query_vec": query_vec, "limit": 6}
+    for i, pid_str in enumerate(prop_id_strs):
+        params[f"pid_{i}"] = pid_str
 
-    def cosine_distance(chunk):
-        try:
-            q = np.array(query_vec, dtype=np.float32)
-            c = np.array(chunk.embedding, dtype=np.float32)
-            if np.linalg.norm(q) == 0 or np.linalg.norm(c) == 0:
-                return 1.0
-            return 1.0 - float(np.dot(q, c) / (np.linalg.norm(q) * np.linalg.norm(c)))
-        except Exception:
-            return 1.0
+    conditions = [
+        f"dc.property_id IN ({placeholders})",
+        "dc.embedding IS NOT NULL",
+    ]
 
-    sorted_chunks = sorted(all_chunks, key=cosine_distance)[:6]
+    if req.doc_type is not None:
+        conditions.append("pd.doc_type::text = :doc_type")
+        params["doc_type"] = req.doc_type
 
-    docs_context = []
-    for chunk in sorted_chunks:
-        prop_name = next((p.name for p in properties_info if p.id == chunk.property_id), "Unknown Stay")
-        docs_context.append(f"[Source Document for {prop_name}]: {chunk.content}")
-        
-    formatted_docs = "\n\n".join(docs_context) if docs_context else "No document snippets found for these properties."
+    where_clause = " AND ".join(conditions)
 
-    properties_summary = ""
-    for p in properties_info:
-        city_name = p.city.name if p.city else "Unknown"
-        # Build full amenity map: present ✓ / absent ✗
+    sql = sa_text(f"""
+        SELECT
+            dc.content, dc.document_id, dc.property_id,
+            pd.title AS doc_title,
+            pd.doc_type::text AS doc_type_str,
+            dc.embedding <=> CAST(:query_vec AS vector) AS distance
+        FROM document_chunks dc
+        INNER JOIN property_documents pd ON dc.document_id = pd.id
+        WHERE {where_clause}
+        ORDER BY distance
+        LIMIT :limit
+    """)
+    rows = db.execute(sql, params).fetchall()
+
+    # Build Document Excerpts section (matching chat.py format)
+    if rows:
+        docs_parts = []
+        for row in rows:
+            prop_name = "Unknown Stay"
+            for p in properties_info:
+                if str(p.id) == str(row.property_id):
+                    prop_name = p.name
+                    break
+            score = round(1.0 - row.distance, 3)
+            docs_parts.append(
+                f"[{len(docs_parts)+1}] (source: {row.doc_title or 'Unknown'}, "
+                f"property: {prop_name}, "
+                f"type: {row.doc_type_str or 'other'}, "
+                f"relevance: {score:.2f})\n{row.content}"
+            )
+        formatted_docs = "\n\n".join(docs_parts)
+    else:
+        formatted_docs = "(No document excerpts matched the query.)"
+
+    # Build Property Listings section with full location hierarchy
+    prop_listing_parts = []
+    for i, p in enumerate(properties_info, 1):
+        city = p.city
+        city_name = city.name if city else "Unknown City"
+        state_name = city.parent.name if city and city.parent else ""
+        country_name = city.parent.parent.name if city and city.parent and city.parent.parent else "India"
+        full_location = ", ".join(filter(None, [city_name, state_name, country_name]))
+
         amenities_map = p.amenities or {}
         amenity_lines = "\n".join(
             f"  {'✓' if v else '✗'} {k.replace('_', ' ').title()}"
             for k, v in amenities_map.items()
         ) if amenities_map else "  No amenity data available."
-        properties_summary += f"""
----
-Property: {p.name} (ID: {p.id})
-Type: {p.property_type.value if p.property_type else 'hotel'}
-City: {city_name}
-Address: {p.address}
-Rating: {p.avg_rating} ({p.review_count} reviews)
-Amenities (full list, ✓ = present, ✗ = not available):
-{amenity_lines}
-Description: {p.description}
-"""
 
-    system_prompt = f"""You are a specialized AI travel concierge helping a customer choose between the following properties:
-{properties_summary}
+        prop_listing_parts.append(
+            f"[{i}] {p.name} [PropertyCard: {p.id}]\n"
+            f"    Type: {p.property_type.value if p.property_type else 'hotel'} | "
+            f"Location: {full_location}\n"
+            f"    Address: {p.address}\n"
+            f"    Rating: {p.avg_rating}⭐ ({p.review_count} reviews)\n"
+            f"    Amenities (✓ = present, ✗ = not available):\n"
+            f"{amenity_lines}\n"
+            f"    About: {p.description}"
+        )
 
-Use these relevant document snippets retrieved from their files to help answer the user's question:
+    formatted_properties = "\n\n".join(prop_listing_parts)
+
+    # Build the system prompt matching chat.py's two-section structure
+    props_instruction = f"\n\nProperty Listings:\n{formatted_properties}"
+    if properties_info:
+        props_instruction += (
+            "\n\nCRITICAL: Whenever you recommend, suggest, or discuss any of the "
+            "above properties to the user, you MUST include the text markup "
+            "`[PropertyCard: <property_id>]` (using the exact UUID from the list) "
+            "directly in your response so the system can render a clickable card. "
+            "For example: 'I suggest staying at the Grand Plaza: "
+            "[PropertyCard: 123e4567-e89b-12d3-a456-426614174000].'"
+        )
+
+    system_prompt = f"""You are a specialized AI travel concierge helping a customer choose between the following properties.
+
+Below you will find TWO sections of context:
+1. **Document Excerpts** — snippets from property documents for the properties being compared.
+2. **Property Listings** — structured data about each property (name, type, location, rating, amenities).
+
+=== Document Excerpts ===
 {formatted_docs}
 
 Compare the properties fairly based on the user's query. Follow these STRICT formatting rules:
@@ -416,11 +468,7 @@ Compare the properties fairly based on the user's query. Follow these STRICT for
 5. Be objective, highlighting the strengths and trade-offs of each.
 6. Keep the answer concise and directly address the question.
 7. Always respond in a friendly, helpful tone.
-"""
+""" + props_instruction
 
-    reply = ask_llm(system_prompt, req.history)
-    return {"reply": reply}
-
-
-
-
+    reply, reasoning_details = ask_llm(system_prompt, req.history)
+    return {"reply": reply, "reasoning_details": reasoning_details}

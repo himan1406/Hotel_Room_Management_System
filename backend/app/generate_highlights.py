@@ -33,7 +33,7 @@ def build_user_message(prop_name, description, reviews):
 
 def generate_highlight(prop_name, description, reviews):
     user_msg = build_user_message(prop_name, description, reviews)
-    reply = ask_llm(SYSTEM_PROMPT, [{"role": "user", "content": user_msg}],
+    reply, _ = ask_llm(SYSTEM_PROMPT, [{"role": "user", "content": user_msg}],
                     temperature=0.7, max_tokens=200)
     if not reply or "API_KEY" in reply or "unavailable" in reply or "configured" in reply:
         return None
