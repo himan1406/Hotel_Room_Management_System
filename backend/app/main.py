@@ -6,14 +6,14 @@ from fastapi.staticfiles import StaticFiles
 from app.routers import auth, admin, hotels, properties, bookings, messages, reviews, rag, chat
 from app import ws
 from app.pages import router as pages_router
-from app.seed import seed_admin, seed_locations
 
 app = FastAPI(title="HRMS - Hotel Room Management System")
 
-# ── Static files ──────────────────────────────────────────
-_base = os.path.dirname(__file__)
+_app_dir = os.path.dirname(__file__)          # /app/app
+_container_root = os.path.dirname(_app_dir)   # /app
+_frontend_dir = os.path.join(_container_root, "frontend")
 
-app.mount("/static", StaticFiles(directory=os.path.join(_base, "static")), name="static")
+app.mount("/static", StaticFiles(directory=os.path.join(_frontend_dir, "static")), name="static")
 
 
 # ── Routers ───────────────────────────────────────────────

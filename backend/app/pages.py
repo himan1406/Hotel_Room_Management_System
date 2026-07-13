@@ -4,9 +4,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-templates = Jinja2Templates(
-    directory=os.path.join(os.path.dirname(__file__), "templates")
-)
+_app_dir = os.path.dirname(__file__)          # /app/app
+_container_root = os.path.dirname(_app_dir)   # /app
+_frontend_dir = os.path.join(_container_root, "frontend")
+
+templates = Jinja2Templates(directory=os.path.join(_frontend_dir, "templates"))
 
 router = APIRouter()
 
