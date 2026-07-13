@@ -1,5 +1,10 @@
+import os
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+
+load_dotenv()
 
 _model = None
 
@@ -7,7 +12,7 @@ _model = None
 def get_embedder():
     global _model
     if _model is None:
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
+        _model = SentenceTransformer(os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2"))
     return _model
 
 
