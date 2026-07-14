@@ -1,0 +1,269 @@
+/* ==================== Compare Floating Bar ==================== */
+.compare-floating-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--ink);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 900;
+    transform: translateY(100%);
+    transition: transform var(--med) var(--ease);
+    box-shadow: 0 -4px 24px rgba(42, 33, 27, 0.18);
+}
+.compare-floating-bar::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--gold) 100%);
+}
+.compare-floating-bar.open { transform: translateY(0); }
+
+.compare-bar-content {
+    max-width: 1120px;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.9rem;
+}
+.compare-bar-content strong {
+    font-family: 'Space Mono', monospace;
+    color: var(--gold);
+}
+
+/* ==================== Comparison Grid Cards ==================== */
+.comparison-prop-card {
+    position: relative;
+    cursor: pointer;
+    transition: transform var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.comparison-prop-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-md);
+}
+.comparison-prop-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--gold) 100%);
+}
+
+/* ==================== Skeleton loader ==================== */
+@keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+/* ==================== Comparison Chat Card ==================== */
+.comparison-chat-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    position: relative;
+    overflow: hidden;
+}
+.comparison-chat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent) 0%, var(--gold) 100%);
+}
+
+/* ==================== Compare toggle button ==================== */
+.compare-toggle-btn {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.72rem;
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: all var(--fast) var(--ease);
+    white-space: nowrap;
+    line-height: 1.4;
+}
+.compare-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
+.compare-toggle-btn.compare-toggle-active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+.compare-toggle-btn.compare-toggle-active:hover {
+    background: color-mix(in srgb, var(--accent) 85%, #000);
+    color: #fff;
+}
+
+/* ==================== Compare Chat Messages ==================== */
+.comp-msg-user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 18px 18px 4px 18px;
+    max-width: 72%;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.comp-msg-ai {
+    align-self: stretch;
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+    padding: 18px 20px 12px;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: var(--ink);
+    word-break: break-word;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+.comp-msg-ai:hover { border-color: var(--line-soft); }
+
+/* Markdown: Headings */
+.comp-md-h1, .comp-md-h2 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--ink);
+    margin: 14px 0 6px;
+    padding-bottom: 5px;
+    border-bottom: 2px solid var(--accent);
+    letter-spacing: -0.01em;
+}
+.comp-md-h3 {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin: 16px 0 6px;
+}
+
+.comp-md-p { margin: 6px 0; color: var(--ink-soft); }
+.comp-md-p:first-child { margin-top: 0; }
+
+.comp-md-hr {
+    border: none;
+    border-top: 1px solid var(--line-soft);
+    margin: 12px 0;
+}
+
+.comp-md-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.comp-md-list li {
+    padding-left: 18px;
+    position: relative;
+    color: var(--ink-soft);
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+.comp-md-list li::before {
+    content: '•';
+    position: absolute;
+    left: 4px;
+    color: var(--accent);
+    font-weight: 700;
+}
+
+.comp-md-code {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.78rem;
+    background: var(--gold-tint);
+    border: 1px solid var(--line-soft);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--accent-deep);
+}
+
+.comp-md-table-wrap {
+    overflow-x: auto;
+    margin: 12px 0;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--line);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.comp-md-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+.comp-md-table thead {
+    background: var(--ink);
+    color: #fff;
+}
+.comp-md-table thead th {
+    padding: 10px 14px;
+    text-align: left;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 700;
+    border-bottom: 2px solid var(--accent);
+    white-space: nowrap;
+}
+.comp-md-table tbody tr {
+    border-bottom: 1px solid var(--line-soft);
+    transition: background var(--fast) var(--ease);
+}
+.comp-md-table tbody tr:last-child { border-bottom: none; }
+.comp-md-table tbody tr:nth-child(even) { background: var(--gold-tint); }
+.comp-md-table tbody tr:hover { background: rgba(var(--accent-rgb, 120, 40, 28), 0.05); }
+.comp-md-table td {
+    padding: 9px 14px;
+    color: var(--ink-soft);
+    line-height: 1.45;
+    vertical-align: middle;
+}
+.comp-md-table td:first-child { font-weight: 600; color: var(--ink); }
+
+/* Table cell badges */
+.comp-td-yes {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: rgba(39, 174, 96, 0.12);
+    color: #27ae60;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 0.8rem;
+}
+.comp-td-no {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: rgba(231, 76, 60, 0.1);
+    color: #e74c3c;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 0.8rem;
+}
+.comp-td-empty { color: var(--ink-faint); font-size: 1rem; }
+
+/* Widen the comparison chat message area */
+#compChatMessages { max-height: 420px !important; }

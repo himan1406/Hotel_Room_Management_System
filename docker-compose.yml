@@ -1,12 +1,17 @@
+x-db-common: &db-common
+  POSTGRES_USER: ${DB_USER:-postgres}
+  POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+  POSTGRES_DB: ${DB_NAME:-hotel_booking_db}
+
 services:
   db:
     image: pgvector/pgvector:pg16
+    container_name: hrms-db
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME:-hotel_booking_db}
+      <<: *db-common
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -14,24 +19,39 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    networks:
+      - hrms-net
 
   api:
     build:
       context: ./backend
+    container_name: hrms-api
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD}@db:5432/${DB_NAME:-hotel_booking_db}
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-hotel_booking_db}
     env_file:
       - ./backend/.env
     volumes:
-      - uploads:/app/uploads
       - ./backend:/app
       - ./frontend:/app/frontend
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - hrms-net
 
 volumes:
   pgdata:
-  uploads:
+
+networks:
+  hrms-net:
+    driver: bridge

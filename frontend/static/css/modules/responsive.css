@@ -1,0 +1,68 @@
+/* ==================== Responsive: Search form ==================== */
+@media (max-width: 900px) {
+    .search-form { grid-template-columns: 1fr 1fr; }
+    .search-form .search-location { grid-column: 1 / -1; }
+    .search-form .btn { grid-column: 1 / -1; }
+}
+
+/* ==================== Responsive: Hero ==================== */
+@media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; }
+    .hero-visual { order: -1; max-width: 340px; margin: 0 auto; }
+}
+
+/* ==================== Responsive: Navbar + Chat ==================== */
+@media (max-width: 760px) {
+    .nav-links {
+        display: none;
+        position: absolute;
+        top: 62px;
+        right: 24px;
+        left: 24px;
+        flex-direction: column;
+        align-items: stretch;
+        background: var(--surface);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-lg);
+        animation: rise var(--fast) var(--ease) forwards;
+        z-index: 65;
+    }
+    .nav-links.open { display: flex; }
+    .nav-links a { text-align: center; padding: 12px 18px; }
+    .nav-toggle { display: inline-flex; }
+    .nav-account-name { display: none; }
+    .nav-account-btn { padding: 5px; }
+    .nav-brand-text { display: none; }
+
+    .chat-panel {
+        width: calc(100vw - 32px);
+        height: 70vh;
+        right: 16px;
+        bottom: 16px;
+    }
+}
+
+/* ==================== Responsive: Property detail gallery ==================== */
+@media (max-width: 768px) {
+    .property-detail-body {
+        grid-template-columns: 1fr !important;
+    }
+    .property-detail-gallery {
+        grid-template-columns: 1fr;
+        height: 240px;
+    }
+    .gallery-sub-images { display: none; }
+}
+
+/* ==================== Responsive: Comparison grid ==================== */
+@media (max-width: 768px) {
+    .comparison-grid {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* ==================== Responsive: Small screens ==================== */
+@media (max-width: 520px) {
+    .form-container { padding: 28px 22px; }
+    .hero-copy h1 { font-size: 2.1rem; }
+}

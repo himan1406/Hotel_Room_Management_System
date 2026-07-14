@@ -4,16 +4,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import auth, admin, hotels, properties, bookings, messages, reviews, rag, chat
-from app import ws
-from app.pages import router as pages_router
+from app.routers.auth import auth
+from app.routers.admin import admin
+from app.routers.hotel import hotels
+from app.routers.customers import properties, bookings, reviews
+from app.routers.communication import messages, chat, rag
+from app.services import ws
+from app.routers.pages import router as pages_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: auto-prune chat sessions older than 90 days
-    from app.database import SessionLocal
-    from app.routers.chat import prune_old_sessions
+    from app.core.database import SessionLocal
+    from app.routers.communication.chat import prune_old_sessions
     db = None
     try:
         db = SessionLocal()
