@@ -195,27 +195,27 @@ def _extract_search_terms(query: str) -> list[str]:
     and "show me resorts in delhi with pool" becomes ["resorts", "delhi", "pool"].
     """
     STOPWORDS = {
-        "give", "me", "for", "in", "the", "a", "an", "show", "find", "need",
-        "want", "looking", "recommendations", "recs", "please", "can", "you",
-        "with", "and", "or", "that", "this", "is", "are", "has", "have",
-        "some", "any", "do", "does", "did", "would", "could", "should", "will",
-        "not", "no", "but", "if", "on", "at", "to", "from", "by", "about",
-        "near", "around", "there", "here", "where", "what", "which",
-        "how", "much", "many", "more", "most", "best", "top",
+        "a", "an", "the", "this", "that", "each", "few", "other", "own", "same",
+        "i", "we", "they", "he", "she", "it",
+        "my", "our", "your", "his", "her", "its", "their", "them", "me", "you",
+        "is", "are", "was", "were", "be", "been", "being",
+        "has", "have", "had", "do", "does", "did", "done",
+        "will", "would", "could", "should", "can",
+        "give", "show", "find", "need", "want", "looking",
+        "please", "recommendations", "recs",
+        "know", "tell", "see", "think",
+        "of", "in", "on", "at", "to", "from", "by", "for", "with",
+        "as", "via", "per", "into", "through",
+        "and", "or", "but", "if", "so", "than",
+        "because", "until", "while", "about",
+        "very", "really", "just", "also", "too",
+        "such", "only", "not", "no",
         "nice", "beautiful", "amazing", "awesome",
-        "such", "also", "too", "very", "really", "just", "only",
-        "up", "down", "out", "over", "back", "off", "into", "through",
-        "during", "before", "after", "above", "below", "between", "under",
-        "again", "further", "then", "once", "when", "why",
-        "each", "few", "more", "most", "other", "such",
-        "only", "own", "same", "so", "than", "too", "very", "just",
-        "because", "as", "until", "while", "of", "per", "via",
-        "was", "were", "been", "being", "having", "does", "done",
-        "getting", "going", "go", "went", "come", "came",
-        "know", "known", "take", "took", "taken", "see", "saw", "seen",
-        "think", "thought", "tell", "told", "give", "gave", "given",
-        "i", "we", "they", "he", "she", "it", "my", "our", "your",
-        "his", "her", "its", "their", "them",
+        "before", "after", "during", "again", "then", "once",
+        "when", "where", "what", "which", "how", "why",
+        "above", "below", "between", "under",
+        "further", "here", "there",
+        "many", "some", "any", "more", "most",
     }
     words = query.lower().split()
     meaningful = [
@@ -225,19 +225,12 @@ def _extract_search_terms(query: str) -> list[str]:
     ]
     if not meaningful:
         meaningful = [query.strip()]
-    # Deduplicate while preserving order
+
     seen: set[str] = set()
     return [x for x in meaningful if not (x in seen or seen.add(x))]
 
 
 def _build_search_context(current_message: str, messages: list[dict]) -> str:
-    """Enrich the search query with conversation context for follow-up questions.
-
-    When the user follows up with "what's the price?" after asking about
-    cancellation policy, this prepends the last assistant response so the
-    search query becomes something like:
-    "Free cancellation up to 48 hours before check-in... Follow-up: what's the price?"
-    """
     for msg in reversed(messages[:-1] if len(messages) > 1 else []):
         if msg["role"] == "assistant":
             return f"{msg['content'][:300]}\n\nFollow-up: {current_message}"
@@ -582,6 +575,17 @@ def chat(
             # a property — this lets follow-ups work without repeating names.
             previous_ids = _fetch_previous_property_ids(messages)
             property_ids_for_docs = previous_ids if previous_ids else None
+
+    # ── Scope document search to hotel rep's own properties ──────────────
+    # Reps should only see Document Excerpts from their own uploaded docs,
+    # never from other properties.
+    if user and user.role == UserRole.hotel_rep:
+        rep_prop_ids = [
+            str(p.id) for p in
+            db.query(Property.id).filter(Property.owner_rep_id == user.id).all()
+        ]
+        if rep_prop_ids:
+            property_ids_for_docs = rep_prop_ids
 
     # ── Stage 2: Retrieve relevant document chunks ───────────────────────
     # Use the context-enriched search query so follow-ups like "what's the

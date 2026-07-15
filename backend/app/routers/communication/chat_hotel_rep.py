@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.db_models import (
     Property, Room, Booking, Review, User, UserRole, Availability, BookingStatus,
+    PropertyDocument,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,33 @@ def _build_hotel_rep_context(db: Session, user) -> str:
             avail = avail_map.get(str(room.id), room.total_quantity)
             lines.append(f"  - {room.room_type} ({room.property.name}): {avail}/{room.total_quantity} available")
 
-    # ── 4. Booking summary ──
+    # ── 4. Uploaded documents per property ──
+    documents = db.query(PropertyDocument).filter(
+        PropertyDocument.property_id.in_(prop_ids),
+    ).order_by(PropertyDocument.property_id, PropertyDocument.doc_type).all()
+
+    if documents:
+        docs_by_prop: dict[str, list] = {}
+        for doc in documents:
+            pid = str(doc.property_id)
+            if pid not in docs_by_prop:
+                docs_by_prop[pid] = []
+            docs_by_prop[pid].append(doc)
+
+        lines.append("\nUploaded documents:")
+        for p in properties:
+            prop_docs = docs_by_prop.get(str(p.id), [])
+            if prop_docs:
+                doc_list = ", ".join(
+                    f'"{d.title}" ({d.doc_type.value})' for d in prop_docs
+                )
+                lines.append(f"  - {p.name}: {doc_list}")
+            else:
+                lines.append(f"  - {p.name}: (no documents uploaded)")
+    else:
+        lines.append("\nUploaded documents: (none)")
+
+    # ── 5. Booking summary ──
     booking_rows = db.execute(text("""
         SELECT
             b.status,
@@ -130,7 +157,7 @@ def _build_hotel_rep_context(db: Session, user) -> str:
                  f"{status_counts.get('cancelled', 0)} cancelled")
     lines.append(f"Estimated revenue (confirmed + completed): ₹{total_revenue:,.0f}")
 
-    # ── 5. Recent bookings (last 10) ──
+    # ── 6. Recent bookings (last 10) ──
     recent_bookings = db.execute(text("""
         SELECT
             u.full_name AS customer_name,
@@ -165,7 +192,7 @@ def _build_hotel_rep_context(db: Session, user) -> str:
                 f"{check_in_str}-{check_out_str} ({guests}), {rb.status}, ₹{rb.total_price:,.0f}"
             )
 
-    # ── 6. Review summary per property ──
+    # ── 7. Review summary per property ──
     review_rows = db.execute(text("""
         SELECT
             p.name AS property_name,
@@ -187,7 +214,7 @@ def _build_hotel_rep_context(db: Session, user) -> str:
                 f"  - {rr.property_name}: {rr.avg_rating}★ ({rr.review_count} reviews){unanswered_str}"
             )
 
-    # ── 7. Properties detail ──
+    # ── 8. Properties detail ──
     lines.append("\nProperties detail:")
     for p in properties:
         city = p.city.name if p.city else "Unknown"
