@@ -434,6 +434,14 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // Close account menu on outside click
+    document.addEventListener("click", (e) => {
+        const navAccount = document.getElementById("navAccount");
+        if (navAccount && !navAccount.contains(e.target)) {
+            toggleAccountMenu(true);
+        }
+    });
+
     // Dashboard
     const dashboardView = document.getElementById("dashboardView");
     if (dashboardView) {

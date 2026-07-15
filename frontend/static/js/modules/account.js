@@ -7,7 +7,7 @@ async function loadMyBookings(container) {
     if (!c) return;
     c.innerHTML = `<div class="empty-state">Loading your bookings...</div>`;
     try {
-        const data = await API.get("/api/bookings/my-bookings");
+        const data = await API.get("/api/bookings");
         renderMyBookings(data.bookings || data, data.groups || [], c);
     } catch (err) {
         c.innerHTML = `<div class="empty-state" style="color:var(--bad)">Could not load bookings: ${escapeHtml(err.message)}</div>`;
@@ -106,11 +106,11 @@ function toggleAccountMenu(forceClose) {
     const menu = document.getElementById("navAccountMenu");
     if (!menu) return;
     if (forceClose) {
-        menu.classList.remove("show");
+        menu.classList.remove("open");
         document.getElementById("navAccountBtn")?.setAttribute("aria-expanded", "false");
         return;
     }
-    const isOpen = menu.classList.toggle("show");
+    const isOpen = menu.classList.toggle("open");
     document.getElementById("navAccountBtn")?.setAttribute("aria-expanded", isOpen);
 }
 

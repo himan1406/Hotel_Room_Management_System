@@ -101,7 +101,13 @@ def list_my_properties(
     db: Session = Depends(get_db),
 ):
     props = db.query(Property).filter(Property.owner_rep_id == user.id).all()
-    return [PropertyResponse.model_validate(p).model_dump() for p in props]
+    result = []
+    for p in props:
+        data = PropertyResponse.model_validate(p).model_dump()
+        data["city"] = p.city.name if p.city else None
+        data["room_count"] = db.query(Room).filter(Room.property_id == p.id).count()
+        result.append(data)
+    return result
 
 
 def _ensure_location_from_address(db: Session, address: str | None, prop: Property):
