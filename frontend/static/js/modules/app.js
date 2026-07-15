@@ -42,9 +42,7 @@ async function initDashboard() {
     }
 
     if (user.role === "admin") {
-        if (eyebrow) eyebrow.textContent = "Platform Admin";
-        if (heading) heading.textContent = "Dashboard";
-        view.innerHTML = `<div class="card"><p>Go to the <a href="/admin">Admin Panel</a> to manage registrations.</p></div>`;
+        window.location.href = "/admin";
         return;
     }
 

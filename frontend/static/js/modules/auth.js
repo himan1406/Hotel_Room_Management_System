@@ -28,7 +28,7 @@ function updateNav(user) {
     if (user) {
         loginLink.style.display = "none";
         signupLink.style.display = "none";
-        dashLink.style.display = "inline";
+        dashLink.style.display = user.role === "admin" ? "none" : "inline";
         adminLink.style.display = user.role === "admin" ? "inline" : "none";
         navMessages.style.display = "inline-flex";
         navHotelSetup.style.display = "none";
@@ -44,7 +44,7 @@ function updateNav(user) {
             if (user.role === "customer") {
                 menuItems.push(`<button type="button" onclick="openBookingsModal()">Past Bookings</button>`);
             }
-            menuItems.push(`<a href="/dashboard">Dashboard</a>`);
+            menuItems.push(user.role === "admin" ? `<a href="/admin">Admin Panel</a>` : `<a href="/dashboard">Dashboard</a>`);
             menuItems.push(`<button type="button" class="nav-account-logout" onclick="logout()">Logout</button>`);
             navAccountMenu.innerHTML = menuItems.join("");
         }

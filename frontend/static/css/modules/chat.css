@@ -391,3 +391,74 @@
     font-weight: 600;
     color: var(--gold);
 }
+
+/* ── Admin Chat Cards ── */
+.chat-admin-section {
+    margin-top: 10px;
+    width: 100%;
+}
+
+.chat-admin-label {
+    font-family: 'Space Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--ink-soft);
+    margin-bottom: 8px;
+}
+
+.chat-admin-hotel-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+}
+
+.chat-admin-hotel-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.chat-admin-hotel-info strong {
+    font-size: 0.88rem;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chat-admin-hotel-meta {
+    font-size: 0.75rem;
+    color: var(--ink-faint);
+    margin-top: 2px;
+}
+
+.chat-admin-hotel-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.chat-action-confirm {
+    padding: 12px;
+    background: var(--gold-tint);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+}
+
+.chat-action-confirm-text {
+    font-size: 0.88rem;
+    margin-bottom: 10px;
+    line-height: 1.4;
+}
+
+.chat-action-confirm-buttons {
+    display: flex;
+    gap: 8px;
+}

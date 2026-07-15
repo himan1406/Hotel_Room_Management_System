@@ -2,6 +2,7 @@
     const AI_SESSION_KEY = "ai_chat_session_id";
     let aiSessionId = localStorage.getItem(AI_SESSION_KEY);
     let isLoading = false;
+    let aiUserRole = null;
 
     const HTML = `
     <button id="aiChatFAB" class="ai-fab" onclick="toggleAIChat()" aria-label="Open Front Desk AI chat">
@@ -39,13 +40,28 @@
         "Any good resorts in Goa?",
     ];
 
+    const ADMIN_SUGGESTIONS = [
+        "How many properties are registered?",
+        "Show pending registrations",
+        "How many rooms in Gurugram?",
+        "Show me all hotel reps",
+    ];
+
+    function escapeHtml(str) {
+        if (!str) return "";
+        const div = document.createElement("div");
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
     function renderAISuggestions() {
         const container = document.getElementById("aiChatSuggestions");
         if (!container) return;
         const msgs = document.getElementById("aiChatMessages");
         const hasMessages = msgs && msgs.querySelectorAll(".chat-msg").length > 0;
         container.style.display = hasMessages ? "none" : "flex";
-        container.innerHTML = AI_SUGGESTIONS.map(s =>
+        const suggestions = aiUserRole === "admin" ? ADMIN_SUGGESTIONS : AI_SUGGESTIONS;
+        container.innerHTML = suggestions.map(s =>
             `<button class="chat-suggestion-chip" onclick="document.getElementById('aiChatInput').value=this.textContent;document.getElementById('aiChatInput').focus();document.getElementById('aiChatInput').style.height='auto'">${s}</button>`
         ).join("");
     }
@@ -53,11 +69,22 @@
     document.addEventListener("DOMContentLoaded", function () {
         document.body.insertAdjacentHTML("beforeend", HTML);
 
+        fetchUserRole();
         if (aiSessionId) {
             loadChatHistory();
         }
         renderAISuggestions();
     });
+
+    async function fetchUserRole() {
+        try {
+            const res = await fetch("/api/auth/me", { credentials: "include" });
+            if (res.ok) {
+                const user = await res.json();
+                aiUserRole = user.role;
+            }
+        } catch {}
+    }
 
     window.openAIChat = function () {
         const panel = document.getElementById("aiChatPanel");
@@ -152,18 +179,83 @@
             propertyIds.push(propId);
             return "";
         });
+
+        // Extract PendingHotel markers and remove from text
+        const pendingHotels = [];
+        formattedText = formattedText.replace(/\[PendingHotel:\s*([a-f0-9\-]{36})\s*\|\s*([^|]+?)\s*\|\s*([^\]]+?)\]/gi, (match, id, name, email) => {
+            pendingHotels.push({ id, name: name.trim(), email: email.trim() });
+            return "";
+        });
+
+        // Extract Action markers and remove from text
+        const actions = [];
+        formattedText = formattedText.replace(/\[Action:\s*(approve_hotel|reject_hotel|deactivate_hotel_rep|activate_hotel_rep)\s*\|\s*([a-f0-9\-]{36})\s*\|\s*([^\]]+?)\]/gi, (match, action, id, name) => {
+            actions.push({ action, id, name: name.trim() });
+            return "";
+        });
         
         // Clean up trailing linebreaks/spaces in bubble text
         body.innerHTML = formattedText.trim().replace(/(<br>\s*)+$/g, '');
         div.appendChild(body);
 
-        // Append placeholders outside the bubble but inside the message block
+        // Append property card placeholders
         propertyIds.forEach(propId => {
             const placeholder = document.createElement("div");
             placeholder.className = "chat-property-card-placeholder";
             placeholder.setAttribute("data-property-id", propId);
             placeholder.innerHTML = `<div class="chat-prop-card-loading">Loading property info...</div>`;
             div.appendChild(placeholder);
+        });
+
+        // Render pending hotel cards
+        if (pendingHotels.length > 0) {
+            const hotelsContainer = document.createElement("div");
+            hotelsContainer.className = "chat-admin-section";
+            hotelsContainer.innerHTML = `<div class="chat-admin-label">Pending Registrations</div>`;
+            pendingHotels.forEach(hotel => {
+                const card = document.createElement("div");
+                card.className = "chat-admin-hotel-card";
+                card.innerHTML = `
+                    <div class="chat-admin-hotel-info">
+                        <strong>${escapeHtml(hotel.name)}</strong>
+                        <div class="chat-admin-hotel-meta">${escapeHtml(hotel.email)}</div>
+                    </div>
+                    <div class="chat-admin-hotel-actions">
+                        <button class="btn btn-success btn-small" onclick="window._adminChatAction('approve_hotel', '${hotel.id}', '${escapeHtml(hotel.name)}', this)">Approve</button>
+                        <button class="btn btn-danger btn-small" onclick="window._adminChatAction('reject_hotel', '${hotel.id}', '${escapeHtml(hotel.name)}', this)">Reject</button>
+                    </div>
+                `;
+                hotelsContainer.appendChild(card);
+            });
+            div.appendChild(hotelsContainer);
+        }
+
+        // Render action confirmation cards
+        actions.forEach(({ action, id, name }) => {
+            const confirmDiv = document.createElement("div");
+            confirmDiv.className = "chat-admin-section chat-action-confirm";
+            const isRepAction = action.includes("hotel_rep");
+            const isActivate = action === "activate_hotel_rep" || action === "approve_hotel";
+            let actionLabel, btnClass, contextText;
+            if (action === "approve_hotel") {
+                actionLabel = "approve"; btnClass = "btn-success"; contextText = "registration for";
+            } else if (action === "reject_hotel") {
+                actionLabel = "reject"; btnClass = "btn-danger"; contextText = "registration for";
+            } else if (action === "deactivate_hotel_rep") {
+                actionLabel = "deactivate"; btnClass = "btn-danger"; contextText = "hotel rep";
+            } else {
+                actionLabel = "activate"; btnClass = "btn-success"; contextText = "hotel rep";
+            }
+            confirmDiv.innerHTML = `
+                <div class="chat-action-confirm-text">
+                    I will <strong>${actionLabel}</strong> the ${contextText} <strong>${escapeHtml(name)}</strong>. Confirm?
+                </div>
+                <div class="chat-action-confirm-buttons">
+                    <button class="btn ${btnClass} btn-small" onclick="window._confirmAdminAction('${action}', '${id}', '${escapeHtml(name)}', this)">Yes, do it</button>
+                    <button class="btn btn-outline btn-small" onclick="this.closest('.chat-action-confirm').remove()">No, cancel</button>
+                </div>
+            `;
+            div.appendChild(confirmDiv);
         });
 
         if (sources && sources.length > 0 && role === "assistant") {
@@ -220,6 +312,54 @@
             container.scrollTop = container.scrollHeight;
         });
     }
+
+    // ── Admin action handlers ──────────────────────────────────────────────
+
+    window._adminChatAction = async function (action, id, name, btnEl) {
+        const card = btnEl.closest(".chat-admin-hotel-card");
+        if (!card) return;
+        const actionsDiv = card.querySelector(".chat-admin-hotel-actions");
+        actionsDiv.innerHTML = `<span style="font-size:0.8rem; color:var(--ink-faint);">Processing...</span>`;
+
+        try {
+            const res = await fetch("/api/chat/admin-action", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ action, id }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Action failed");
+            actionsDiv.innerHTML = `<span style="font-size:0.8rem; color:var(--good);">✓ ${escapeHtml(data.message)}</span>`;
+        } catch (err) {
+            actionsDiv.innerHTML = `<span style="font-size:0.8rem; color:var(--bad);">✗ ${escapeHtml(err.message)}</span>`;
+        }
+        const container = document.getElementById("aiChatMessages");
+        if (container) container.scrollTop = container.scrollHeight;
+    };
+
+    window._confirmAdminAction = async function (action, id, name, btnEl) {
+        const confirmDiv = btnEl.closest(".chat-action-confirm");
+        if (!confirmDiv) return;
+        const buttonsDiv = confirmDiv.querySelector(".chat-action-confirm-buttons");
+        buttonsDiv.innerHTML = `<span style="font-size:0.8rem; color:var(--ink-faint);">Executing...</span>`;
+
+        try {
+            const res = await fetch("/api/chat/admin-action", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({ action, id }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Action failed");
+            confirmDiv.innerHTML = `<div style="font-size:0.85rem; color:var(--good); padding:8px 0;">✓ ${escapeHtml(data.message)}</div>`;
+        } catch (err) {
+            confirmDiv.innerHTML = `<div style="font-size:0.85rem; color:var(--bad); padding:8px 0;">✗ ${escapeHtml(err.message)}</div>`;
+        }
+        const container = document.getElementById("aiChatMessages");
+        if (container) container.scrollTop = container.scrollHeight;
+    };
 
     function showAITyping() {
         const container = document.getElementById("aiChatMessages");
