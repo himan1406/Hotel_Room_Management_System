@@ -8,7 +8,7 @@ from app.routers.auth import auth
 from app.routers.admin import admin
 from app.routers.hotel import hotels
 from app.routers.customers import properties, bookings, reviews
-from app.routers.communication import messages, chat, rag
+from app.routers.communication import messages, chat, chat_admin, rag
 from app.services import ws
 from app.routers.pages import router as pages_router
 
@@ -52,5 +52,6 @@ app.include_router(messages.router)
 app.include_router(reviews.router)
 app.include_router(rag.router)
 app.include_router(chat.router)
+app.include_router(chat_admin.router)
 app.include_router(ws.router)
 app.include_router(pages_router)
