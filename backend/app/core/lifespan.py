@@ -1,11 +1,12 @@
-from contextlib import asynccontextmanager
+﻿from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: auto-prune chat sessions older than 90 days
     from app.core.database import SessionLocal
+
+    # ── Auto-prune chat sessions older than 90 days ────────────
     from app.routers.communication.chat import prune_old_sessions
     db = None
     try:

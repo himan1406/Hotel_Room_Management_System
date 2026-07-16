@@ -1,14 +1,29 @@
 import os
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 
-_app_dir = os.path.dirname(os.path.dirname(__file__))          # /app/app
-_container_root = os.path.dirname(_app_dir)                     # /app
-_frontend_dir = os.path.join(_container_root, "frontend")
+_app_dir = os.path.dirname(os.path.dirname(__file__))          # .../backend/app
+_project_root = os.path.dirname(_app_dir)                     # .../backend
+
+# Docker: frontend is at /app/frontend (volume mount in docker-compose)
+# Local:  frontend is sibling of backend/ at the project root
+_docker_frontend = os.path.join(_project_root, "frontend")
+_sibling_frontend = os.path.normpath(os.path.join(_project_root, "..", "frontend"))
+
+_frontend_dir = _docker_frontend if os.path.isdir(os.path.join(_docker_frontend, "templates")) else _sibling_frontend
 
 templates = Jinja2Templates(directory=os.path.join(_frontend_dir, "templates"))
+
+def mount_static_files(app: FastAPI):
+    if os.path.exists(os.path.join(_frontend_dir, "static")):
+        app.mount("/static", StaticFiles(directory=os.path.join(_frontend_dir, "static")), name="static")
+
+    _uploads = os.path.join(_project_root, "uploads")
+    if os.path.exists(_uploads):
+        app.mount("/uploads", StaticFiles(directory=_uploads), name="uploads")
 
 router = APIRouter()
 
