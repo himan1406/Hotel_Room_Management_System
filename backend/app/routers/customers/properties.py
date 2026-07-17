@@ -6,7 +6,7 @@ import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, text as sa_text
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, aliased
 
 from app.core.database import get_db
@@ -338,12 +338,10 @@ class CompareChatRequest(BaseModel):
 def compare_chat(req: CompareChatRequest, db: Session = Depends(get_db)):
     # Fetch the properties being compared
     properties_info = []
-    prop_names = []
     for pid in req.property_ids:
         prop = db.query(Property).filter(Property.id == pid).first()
         if prop:
             properties_info.append(prop)
-            prop_names.append(prop.name)
             
     if not properties_info:
         raise HTTPException(status_code=400, detail="No valid properties provided")
@@ -354,121 +352,15 @@ def compare_chat(req: CompareChatRequest, db: Session = Depends(get_db)):
             detail=f"Invalid doc_type '{req.doc_type}'. Must be one of: {', '.join(sorted(COMPARE_VALID_DOC_TYPES))}"
         )
 
-    from app.core.embeddings import embed_text
+    from app.services.query_executor import run_comparison_pipeline
 
-    query_vec = embed_text(req.message)
+    result = run_comparison_pipeline(
+        db=db,
+        user=None,  # Comparison is customer-facing, no auth required
+        message=req.message,
+        history=req.history,
+        property_ids=[str(pid) for pid in req.property_ids],
+        doc_type=req.doc_type,
+    )
 
-    # Convert property_ids to a list of string representations for the SQL IN clause
-    prop_id_strs = [str(pid) for pid in req.property_ids]
-    placeholders = ", ".join([f"CAST(:pid_{i} AS uuid)" for i in range(len(prop_id_strs))])
-
-    params: dict = {"query_vec": query_vec, "limit": 6}
-    for i, pid_str in enumerate(prop_id_strs):
-        params[f"pid_{i}"] = pid_str
-
-    conditions = [
-        f"dc.property_id IN ({placeholders})",
-        "dc.embedding IS NOT NULL",
-    ]
-
-    if req.doc_type is not None:
-        conditions.append("pd.doc_type::text = :doc_type")
-        params["doc_type"] = req.doc_type
-
-    where_clause = " AND ".join(conditions)
-
-    sql = sa_text(f"""
-        SELECT
-            dc.content, dc.document_id, dc.property_id,
-            pd.title AS doc_title,
-            pd.doc_type::text AS doc_type_str,
-            dc.embedding <=> CAST(:query_vec AS vector) AS distance
-        FROM document_chunks dc
-        INNER JOIN property_documents pd ON dc.document_id = pd.id
-        WHERE {where_clause}
-        ORDER BY distance
-        LIMIT :limit
-    """)
-    rows = db.execute(sql, params).fetchall()
-
-    # Build Document Excerpts section (matching chat.py format)
-    if rows:
-        docs_parts = []
-        for row in rows:
-            prop_name = "Unknown Stay"
-            for p in properties_info:
-                if str(p.id) == str(row.property_id):
-                    prop_name = p.name
-                    break
-            score = round(1.0 - row.distance, 3)
-            docs_parts.append(
-                f"[{len(docs_parts)+1}] (source: {row.doc_title or 'Unknown'}, "
-                f"property: {prop_name}, "
-                f"type: {row.doc_type_str or 'other'}, "
-                f"relevance: {score:.2f})\n{row.content}"
-            )
-        formatted_docs = "\n\n".join(docs_parts)
-    else:
-        formatted_docs = "(No document excerpts matched the query.)"
-
-    # Build Property Listings section with full location hierarchy
-    prop_listing_parts = []
-    for i, p in enumerate(properties_info, 1):
-        city = p.city
-        city_name = city.name if city else "Unknown City"
-        state_name = city.parent.name if city and city.parent else ""
-        country_name = city.parent.parent.name if city and city.parent and city.parent.parent else "India"
-        full_location = ", ".join(filter(None, [city_name, state_name, country_name]))
-
-        amenities_map = p.amenities or {}
-        amenity_lines = "\n".join(
-            f"  {'✓' if v else '✗'} {k.replace('_', ' ').title()}"
-            for k, v in amenities_map.items()
-        ) if amenities_map else "  No amenity data available."
-
-        prop_listing_parts.append(
-            f"[{i}] {p.name} [PropertyCard: {p.id}]\n"
-            f"    Type: {p.property_type.value if p.property_type else 'hotel'} | "
-            f"Location: {full_location}\n"
-            f"    Address: {p.address}\n"
-            f"    Rating: {p.avg_rating}⭐ ({p.review_count} reviews)\n"
-            f"    Amenities (✓ = present, ✗ = not available):\n"
-            f"{amenity_lines}\n"
-            f"    About: {p.description}"
-        )
-
-    formatted_properties = "\n\n".join(prop_listing_parts)
-
-    # Build the system prompt matching chat.py's two-section structure
-    props_instruction = f"\n\nProperty Listings:\n{formatted_properties}"
-    if properties_info:
-        props_instruction += (
-            "\n\nCRITICAL: Whenever you recommend, suggest, or discuss any of the "
-            "above properties to the user, you MUST include the text markup "
-            "`[PropertyCard: <property_id>]` (using the exact UUID from the list) "
-            "directly in your response so the system can render a clickable card. "
-            "For example: 'I suggest staying at the Grand Plaza: "
-            "[PropertyCard: 123e4567-e89b-12d3-a456-426614174000].'"
-        )
-
-    system_prompt = f"""You are a specialized AI travel concierge helping a customer choose between the following properties.
-
-Below you will find TWO sections of context:
-1. **Document Excerpts** — snippets from property documents for the properties being compared.
-2. **Property Listings** — structured data about each property (name, type, location, rating, amenities).
-
-=== Document Excerpts ===
-{formatted_docs}
-
-Compare the properties fairly based on the user's query. Follow these STRICT formatting rules:
-1. Focus only on the properties being compared: {", ".join(prop_names)}.
-2. When showing a comparison table, EVERY cell that represents a yes/no or present/absent value MUST contain ONLY the ✓ symbol (if available/yes) or the ✗ symbol (if not available/no). Never use empty cells, dashes, or blanks.
-3. Use the amenity data above as the ground truth — do not guess or leave cells empty.
-4. Use markdown tables for side-by-side feature comparisons, and bullet points for nuanced trade-offs.
-5. Be objective, highlighting the strengths and trade-offs of each.
-6. Keep the answer concise and directly address the question.
-7. Always respond in a friendly, helpful tone.
-""" + props_instruction
-
-    reply, reasoning_details = ask_llm(system_prompt, req.history)
-    return {"reply": reply, "reasoning_details": reasoning_details}
+    return {"reply": result["reply"], "reasoning_details": None}

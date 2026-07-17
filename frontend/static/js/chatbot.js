@@ -121,6 +121,17 @@
         } catch {}
     }
 
+    function getPropertyContextFromPage() {
+        // Detect if the current page has a property context — e.g. the user
+        // is viewing a specific property detail. This lets the chatbot answer
+        // questions like "what's the cancellation policy?" without needing
+        // the user to mention the property name.
+        const params = new URLSearchParams(window.location.search);
+        const pid = params.get("property_id");
+        if (pid) return pid;
+        return null;
+    }
+
     window.sendAIChatMessage = async function () {
         const input = document.getElementById("aiChatInput");
         const sendBtn = document.getElementById("aiChatSendBtn");
@@ -136,12 +147,19 @@
         isLoading = true;
         sendBtn.disabled = true;
 
+        // Detect property context from the current page
+        const bodyPayload = { message: msg, session_id: aiSessionId };
+        const contextPropId = getPropertyContextFromPage();
+        if (contextPropId) {
+            bodyPayload.property_id = contextPropId;
+        }
+
         try {
             const res = await fetch("/api/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
-                body: JSON.stringify({ message: msg, session_id: aiSessionId }),
+                body: JSON.stringify(bodyPayload),
             });
             if (!res.ok) throw new Error("Chat request failed");
             const data = await res.json();
@@ -171,38 +189,44 @@
         const body = document.createElement("div");
         body.className = "chat-msg-body";
         
-        let formattedText = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+        // ── Extract special markers from RAW text (before markdown render) ──
+        let cleanText = text;
         
-        // Extract property IDs and remove them from the chat bubble text
-        const propertyIds = [];
-        formattedText = formattedText.replace(/\[PropertyCard:\s*([a-f0-9\-]{36})\]/gi, (match, propId) => {
-            propertyIds.push(propId);
+        const propertyCards = [];  // { id, name }
+        // Match [PropertyCard: <id>] or [PropertyCard: <id> | <name>]
+        cleanText = cleanText.replace(/\[PropertyCard:\s*([^\]\|]+?)(?:\s*\|\s*([^\]]+?))?\]/gi, (match, propId, propName) => {
+            propertyCards.push({ id: propId.trim(), name: propName ? propName.trim() : null });
             return "";
         });
 
-        // Extract PendingHotel markers and remove from text
         const pendingHotels = [];
-        formattedText = formattedText.replace(/\[PendingHotel:\s*([a-f0-9\-]{36})\s*\|\s*([^|]+?)\s*\|\s*([^\]]+?)\]/gi, (match, id, name, email) => {
+        cleanText = cleanText.replace(/\[PendingHotel:\s*([a-f0-9\-]{36})\s*\|\s*([^|]+?)\s*\|\s*([^\]]+?)\]/gi, (match, id, name, email) => {
             pendingHotels.push({ id, name: name.trim(), email: email.trim() });
             return "";
         });
 
-        // Extract Action markers and remove from text
         const actions = [];
-        formattedText = formattedText.replace(/\[Action:\s*(approve_hotel|reject_hotel|deactivate_hotel_rep|activate_hotel_rep)\s*\|\s*([a-f0-9\-]{36})\s*\|\s*([^\]]+?)\]/gi, (match, action, id, name) => {
+        cleanText = cleanText.replace(/\[Action:\s*(approve_hotel|reject_hotel|deactivate_hotel_rep|activate_hotel_rep)\s*\|\s*([a-f0-9\-]{36})\s*\|\s*([^\]]+?)\]/gi, (match, action, id, name) => {
             actions.push({ action, id, name: name.trim() });
             return "";
         });
         
-        // Clean up trailing linebreaks/spaces in bubble text
-        body.innerHTML = formattedText.trim().replace(/(<br>\s*)+$/g, '');
+        // ── Render: user gets simple HTML, assistant gets full markdown ──
+        if (role === "user") {
+            body.innerHTML = escapeHtml(cleanText.trim()).replace(/\n/g, '<br>');
+        } else {
+            body.innerHTML = renderCompMarkdown(cleanText.trim());
+        }
         div.appendChild(body);
 
         // Append property card placeholders
-        propertyIds.forEach(propId => {
+        propertyCards.forEach(card => {
             const placeholder = document.createElement("div");
             placeholder.className = "chat-property-card-placeholder";
-            placeholder.setAttribute("data-property-id", propId);
+            placeholder.setAttribute("data-property-id", card.id);
+            if (card.name) {
+                placeholder.setAttribute("data-property-name", card.name);
+            }
             placeholder.innerHTML = `<div class="chat-prop-card-loading">Loading property info...</div>`;
             div.appendChild(placeholder);
         });
@@ -273,9 +297,47 @@
         container.appendChild(div);
         container.scrollTop = container.scrollHeight;
 
+        // Helper: render a mini card with just the property name
+        // Only makes it clickable if the ID is a valid UUID (avoids 422 errors
+        // from old chat history with hallucinated integer IDs like 6, 5, etc.)
+        function showMiniCard(el, id, name) {
+            if (name) {
+                const isValid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)
+                            || /^[a-f0-9]{32}$/i.test(id);
+                const clickAttr = isValid ? `onclick="window.showPropertyInDashboard('${escapeHtml(id)}')"` : '';
+                const clickHint = isValid ? 'Click to view details' : 'Details unavailable';
+                el.innerHTML = `
+                    <div class="chat-prop-card chat-prop-card-mini" ${clickAttr} title="${escapeHtml(name)}">
+                        <div class="chat-prop-card-thumb-placeholder" style="width:48px;height:48px;font-size:1.2rem;">🏨</div>
+                        <div class="chat-prop-card-details">
+                            <h5 class="chat-prop-card-title" style="font-size:0.85rem;">${escapeHtml(name)}</h5>
+                            <div class="chat-prop-card-footer">
+                                <span style="font-size:0.72rem;color:var(--ink-faint);">${clickHint}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                el.innerHTML = '<div class="chat-prop-card-error">⚠️ Property info unavailable</div>';
+            }
+        }
+
         // Load property cards if any placeholders exist
         div.querySelectorAll(".chat-property-card-placeholder").forEach(async (placeholder) => {
             const propId = placeholder.getAttribute("data-property-id");
+            const propName = placeholder.getAttribute("data-property-name");
+
+            // Validate: only fetch if the ID looks like a UUID (36 chars with dashes, or 32 hex chars)
+            // Integer IDs like "6", "5" etc. are hallucinated — skip the API call entirely.
+            const isUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(propId)
+                        || /^[a-f0-9]{32}$/i.test(propId);
+
+            if (!isUuid) {
+                showMiniCard(placeholder, propId, propName);
+                container.scrollTop = container.scrollHeight;
+                return;
+            }
+
             try {
                 const res = await fetch(`/api/properties/${propId}`);
                 if (!res.ok) throw new Error("Failed to load");
@@ -307,7 +369,7 @@
                     </div>
                 `;
             } catch (err) {
-                placeholder.innerHTML = `<div class="chat-prop-card-error">⚠️ Property info unavailable</div>`;
+                showMiniCard(placeholder, propId, propName);
             }
             container.scrollTop = container.scrollHeight;
         });
