@@ -434,6 +434,20 @@ def _extract_sources(tool_results: dict[str, dict]) -> list[dict]:
                     "property_id": r.get("id"),
                 })
 
+        # For REP_REVENUE_ANALYTICS
+        elif tool_name == "REP_REVENUE_ANALYTICS":
+            data = result.get("data", {})
+            sources.append({
+                "title": "Revenue Analytics",
+                "doc_type": "admin_statistics",
+                "score": 1.0,
+                "snippet": (
+                    f"Total Revenue: ₹{data.get('total_revenue', 0):,.2f} "
+                    f"from {data.get('booking_count', 0)} bookings."
+                ),
+                "property_id": None,
+            })
+
     return sources
 
 # ═══════════════════════════════════════════════════════════════════════════

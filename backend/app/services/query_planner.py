@@ -202,8 +202,9 @@ def _role_specific_instructions(role: str | None) -> str:
             "3. Use CUSTOMER_BOOKINGS for questions about "
             "'my bookings', 'my reservations', 'booking history', "
             "or 'my upcoming stays'.\n"
-            "4. You CANNOT modify any data.\n"
-            "5. If no property or location is mentioned, do a broad search."
+            "4. You CANNOT modify any data EXCEPT cancelling bookings.\n"
+            "5. If no property or location is mentioned, do a broad search.\n"
+            "6. Use MUTATION_CANCEL_BOOKING to cancel a booking."
         ),
         "hotel_rep": (
             "1. You can only access data belonging to your own properties.\n"
@@ -221,7 +222,10 @@ def _role_specific_instructions(role: str | None) -> str:
             "'my documents', 'uploaded policies', 'my uploaded files'.\n"
             "7. Use VECTOR_SEARCH for policy or amenity questions scoped "
             "to your own properties.\n"
-            "8. You CANNOT access other reps' data or modify platform settings."
+            "8. Use REP_REVENUE_ANALYTICS to analyze revenue and booking statistics for a date range.\n"
+            "9. Use MUTATION_REPLY_TO_REVIEW to reply to guest reviews.\n"
+            "10. Use MUTATION_UPDATE_PROPERTY to update property details like description.\n"
+            "11. You CANNOT access other reps' data or modify platform settings."
         ),
         "admin": (
             "1. You can view ALL platform data.\n"
@@ -302,11 +306,12 @@ def build_planner_prompt(
 
 REQUIRED_TOOLS = {"VECTOR_SEARCH"}
 CUSTOMER_TOOLS = {
-    "CUSTOMER_BOOKINGS",
+    "CUSTOMER_BOOKINGS", "MUTATION_CANCEL_BOOKING"
 }
 HOTEL_REP_TOOLS = {
     "REP_PROPERTIES", "REP_AVAILABILITY_TODAY", "REP_BOOKINGS",
-    "REP_REVIEWS", "REP_DOCUMENTS",
+    "REP_REVIEWS", "REP_DOCUMENTS", "REP_REVENUE_ANALYTICS",
+    "MUTATION_REPLY_TO_REVIEW", "MUTATION_UPDATE_PROPERTY"
 }
 ADMIN_MUTATION_TOOLS = {
     "MUTATION_APPROVE_HOTEL", "MUTATION_REJECT_HOTEL",

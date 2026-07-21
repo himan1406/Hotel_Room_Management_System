@@ -131,6 +131,51 @@ TOOL_REGISTRY = {
         "allowed_roles": ["admin"],
         "requires_confirmation": True,
     },
+    "MUTATION_REPLY_TO_REVIEW": {
+        "description": (
+            "Reply to a guest review for one of your properties. "
+            "Requires confirmation before execution."
+        ),
+        "params_schema": {
+            "review_id": {
+                "type": "string",
+                "required": True,
+                "description": "UUID of the review",
+            },
+            "reply_text": {
+                "type": "string",
+                "required": True,
+                "description": "The text to reply with",
+            },
+        },
+        "allowed_roles": ["hotel_rep"],
+        "requires_confirmation": True,
+    },
+    "MUTATION_UPDATE_PROPERTY": {
+        "description": (
+            "Update a property's details (e.g. description). "
+            "Requires confirmation before execution."
+        ),
+        "params_schema": {
+            "property_id": {
+                "type": "string",
+                "required": True,
+                "description": "UUID of the property",
+            },
+            "field_to_update": {
+                "type": "string",
+                "required": True,
+                "description": "The field to update (e.g. description)",
+            },
+            "new_value": {
+                "type": "string",
+                "required": True,
+                "description": "The new value for the field",
+            },
+        },
+        "allowed_roles": ["hotel_rep"],
+        "requires_confirmation": True,
+    },
 
     # ────────────────────────────────────────────────────────────────
     # HOTEL REP TOOLS (auto-scoped to the rep's own properties)
@@ -194,6 +239,25 @@ TOOL_REGISTRY = {
         "params_schema": {},
         "allowed_roles": ["hotel_rep"],
     },
+    "REP_REVENUE_ANALYTICS": {
+        "description": (
+            "Analyze revenue and booking statistics across your properties "
+            "for a specific date range."
+        ),
+        "params_schema": {
+            "start_date": {
+                "type": "string",
+                "required": False,
+                "description": "Start date in YYYY-MM-DD format",
+            },
+            "end_date": {
+                "type": "string",
+                "required": False,
+                "description": "End date in YYYY-MM-DD format",
+            },
+        },
+        "allowed_roles": ["hotel_rep"],
+    },
 
     # ────────────────────────────────────────────────────────────────
     # CUSTOMER TOOLS (scoped to the customer's own data)
@@ -226,6 +290,21 @@ TOOL_REGISTRY = {
             },
         },
         "allowed_roles": ["customer"],
+    },
+    "MUTATION_CANCEL_BOOKING": {
+        "description": (
+            "Cancel an existing booking. "
+            "Requires confirmation before execution."
+        ),
+        "params_schema": {
+            "booking_id": {
+                "type": "string",
+                "required": True,
+                "description": "UUID of the booking to cancel",
+            },
+        },
+        "allowed_roles": ["customer"],
+        "requires_confirmation": True,
     },
 
     # ────────────────────────────────────────────────────────────────
@@ -1311,7 +1390,84 @@ def handle_customer_bookings(
 
 
 # ═══════════════════════════════════════════════════════════════
-# 14.  HANDLER MAP: Tool name → handler function
+# 14.  NEW HANDLERS
+# ═══════════════════════════════════════════════════════════════
+
+def handle_mutation_cancel_booking(db: Session, user: User, booking_id: str) -> dict:
+    try:
+        bid = uuid.UUID(booking_id)
+    except ValueError:
+        return {"success": False, "message": "Invalid booking_id format"}
+    
+    booking = db.query(Booking).filter(Booking.id == bid, Booking.customer_id == user.id).first()
+    if not booking:
+        return {"success": False, "message": "Booking not found"}
+    if booking.status in (BookingStatus.cancelled, BookingStatus.completed):
+        return {"success": False, "message": f"Cannot cancel a booking that is {booking.status.value}"}
+    
+    booking.status = BookingStatus.cancelled
+    db.commit()
+    return {"success": True, "message": "Booking successfully cancelled."}
+
+def handle_rep_revenue_analytics(db: Session, user: User, start_date: str = None, end_date: str = None) -> dict:
+    query = (
+        db.query(Booking)
+        .join(Room)
+        .join(Property)
+        .filter(Property.owner_rep_id == user.id)
+        .filter(Booking.status.in_([BookingStatus.completed, BookingStatus.confirmed]))
+    )
+    if start_date:
+        query = query.filter(Booking.check_in >= start_date)
+    if end_date:
+        query = query.filter(Booking.check_in <= end_date)
+    
+    bookings = query.all()
+    total_rev = sum(b.total_price for b in bookings if b.total_price)
+    
+    return {
+        "success": True,
+        "data": {"total_revenue": total_rev, "booking_count": len(bookings)},
+        "formatted": f"Found {len(bookings)} bookings. Total Revenue: ₹{total_rev:,.2f}"
+    }
+
+def handle_mutation_reply_to_review(db: Session, user: User, review_id: str, reply_text: str) -> dict:
+    from datetime import datetime
+    try:
+        rid = uuid.UUID(review_id)
+    except ValueError:
+        return {"success": False, "message": "Invalid review_id format"}
+    
+    review = db.query(Review).join(Property).filter(Review.id == rid, Property.owner_rep_id == user.id).first()
+    if not review:
+        return {"success": False, "message": "Review not found or not authorized"}
+    
+    review.rep_response = reply_text
+    review.responded_at = datetime.utcnow()
+    db.commit()
+    return {"success": True, "message": "Successfully replied to review."}
+
+def handle_mutation_update_property(db: Session, user: User, property_id: str, field_to_update: str, new_value: str) -> dict:
+    try:
+        pid = uuid.UUID(property_id)
+    except ValueError:
+        return {"success": False, "message": "Invalid property_id format"}
+    
+    prop = db.query(Property).filter(Property.id == pid, Property.owner_rep_id == user.id).first()
+    if not prop:
+        return {"success": False, "message": "Property not found or not authorized"}
+    
+    if field_to_update == "description":
+        prop.description = new_value
+    else:
+        return {"success": False, "message": f"Updating field '{field_to_update}' is not supported yet."}
+    
+    db.commit()
+    return {"success": True, "message": f"Successfully updated property {field_to_update}."}
+
+
+# ═══════════════════════════════════════════════════════════════
+# 15.  HANDLER MAP: Tool name → handler function
 #      (Defined here, after all handler function definitions, to
 #       avoid Python forward-reference issues at module load time.)
 # ═══════════════════════════════════════════════════════════════
@@ -1331,6 +1487,10 @@ HANDLER_MAP: dict[str, object] = {
     "ADMIN_PENDING_REGISTRATIONS": handle_admin_pending_registrations,
     "ADMIN_STATISTICS": handle_admin_statistics,
     "ADMIN_REP_LIST": handle_admin_rep_list,
+    "MUTATION_CANCEL_BOOKING": handle_mutation_cancel_booking,
+    "REP_REVENUE_ANALYTICS": handle_rep_revenue_analytics,
+    "MUTATION_REPLY_TO_REVIEW": handle_mutation_reply_to_review,
+    "MUTATION_UPDATE_PROPERTY": handle_mutation_update_property,
 }
 
 
