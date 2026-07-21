@@ -1,8 +1,10 @@
 import logging
 import uuid
+import os
+import tempfile
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,7 @@ from app.models.db_models import (
 )
 from app.routers.auth.auth import get_current_user_optional, require_role
 from app.services.query_executor import run_pipeline
+from app.core.llm import transcribe_audio
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,35 @@ class ChatResponse(BaseModel):
     reply: str
     session_id: str
     conversation_title: str | None = None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# AUDIO TRANSCRIPTION
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.post("/transcribe")
+async def transcribe_chat_audio(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    
+    # Save uploaded file to a temporary location
+    try:
+        suffix = os.path.splitext(file.filename)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            content = await file.read()
+            tmp.write(content)
+            tmp_path = tmp.name
+        
+        # Transcribe using Groq
+        text = transcribe_audio(tmp_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    if not text:
+        raise HTTPException(status_code=500, detail="Transcription failed")
+        
+    return {"text": text}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

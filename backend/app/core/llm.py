@@ -1,4 +1,8 @@
 import logging
+import os
+import tempfile
+import speech_recognition as sr
+from pydub import AudioSegment
 
 from groq import Groq
 
@@ -45,3 +49,29 @@ def ask_llm(
         if "API_KEY" in err_msg or "unauthorized" in err_msg.lower() or "invalid" in err_msg.lower():
             return "The AI assistant is not properly configured. Please ask an administrator to check the GROQ_API_KEY.", None
         return "Sorry, I couldn't process your request. Please try again later.", None
+
+def transcribe_audio(file_path: str) -> str:
+    recognizer = sr.Recognizer()
+    
+    try:
+        # Convert webm/mp4 to wav using pydub
+        audio = AudioSegment.from_file(file_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as wav_file:
+            wav_path = wav_file.name
+            
+        audio.export(wav_path, format="wav")
+        
+        try:
+            with sr.AudioFile(wav_path) as source:
+                audio_data = recognizer.record(source)
+                
+            # recognize using google free API
+            text = recognizer.recognize_google(audio_data)
+            return text
+        finally:
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
+                
+    except Exception as e:
+        logger.error(f"Speech recognition error: {e}")
+        return ""

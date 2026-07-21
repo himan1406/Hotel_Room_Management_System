@@ -3,8 +3,49 @@
     let aiSessionId = localStorage.getItem(AI_SESSION_KEY);
     let isLoading = false;
     let aiUserRole = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+    let usedVoiceInput = false;
 
     const HTML = `
+    <style>
+        .ai-mic-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--ink-faint);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 4px;
+            transition: color 0.2s;
+        }
+        .ai-mic-btn:hover { color: var(--accent); }
+        .ai-mic-recording {
+            color: var(--bad) !important;
+            animation: pulse-mic 1.5s infinite;
+        }
+        @keyframes pulse-mic {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.15); }
+            100% { transform: scale(1); }
+        }
+        .chat-input-area {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .ai-tts-stop {
+            margin-top: 8px;
+            font-size: 0.75rem;
+            color: var(--ink-faint);
+            cursor: pointer;
+            text-decoration: underline;
+            display: none;
+        }
+        .ai-tts-stop:hover { color: var(--bad); }
+    </style>
     <button id="aiChatFAB" class="ai-fab" onclick="toggleAIChat()" aria-label="Open Front Desk AI chat">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
     </button>
@@ -28,6 +69,9 @@
         <div class="chat-suggestions" id="aiChatSuggestions"></div>
         <div class="chat-input-area">
             <textarea id="aiChatInput" rows="1" placeholder="Ask Front Desk..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAIChatMessage()}"></textarea>
+            <button id="aiChatMicBtn" class="ai-mic-btn" onclick="toggleMicRecording()" title="Click to record audio">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            </button>
             <button class="btn btn-primary btn-small" onclick="sendAIChatMessage()" id="aiChatSendBtn">Send</button>
         </div>
     </div>`;
@@ -106,6 +150,64 @@
             if (msgs) msgs.scrollTop = msgs.scrollHeight;
             checkKbStatus();
             renderAISuggestions();
+        } else {
+            if (window.speechSynthesis) window.speechSynthesis.cancel();
+        }
+    };
+
+    window.toggleMicRecording = async function () {
+        const micBtn = document.getElementById("aiChatMicBtn");
+        const input = document.getElementById("aiChatInput");
+        
+        if (isRecording) {
+            mediaRecorder.stop();
+            micBtn.classList.remove("ai-mic-recording");
+            input.placeholder = "Processing audio...";
+            isRecording = false;
+            return;
+        }
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = e => {
+                if (e.data.size > 0) audioChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                stream.getTracks().forEach(t => t.stop());
+                
+                const formData = new FormData();
+                formData.append("file", audioBlob, "recording.webm");
+                
+                try {
+                    const res = await fetch("/api/chat/transcribe", {
+                        method: "POST",
+                        body: formData
+                    });
+                    if (!res.ok) throw new Error("Transcription failed");
+                    const data = await res.json();
+                    
+                    input.value = data.text;
+                    input.placeholder = "Ask Front Desk...";
+                    usedVoiceInput = true;
+                    sendAIChatMessage();
+                } catch (e) {
+                    input.placeholder = "Ask Front Desk...";
+                    alert("Speech recognition failed. Please try again.");
+                }
+            };
+
+            mediaRecorder.start();
+            isRecording = true;
+            micBtn.classList.add("ai-mic-recording");
+            input.value = "";
+            input.placeholder = "Listening...";
+        } catch (e) {
+            alert("Microphone access denied or unavailable.");
         }
     };
 
@@ -167,7 +269,34 @@
             aiSessionId = data.session_id;
             localStorage.setItem(AI_SESSION_KEY, aiSessionId);
             hideAITyping();
-            appendAIMessage("assistant", data.reply, data.sources);
+            const msgEl = appendAIMessage("assistant", data.reply, data.sources);
+            
+            if (usedVoiceInput && window.speechSynthesis) {
+                usedVoiceInput = false;
+                window.speechSynthesis.cancel();
+                
+                const cleanTextForSpeech = data.reply
+                    .replace(/\[PropertyCard:.*?\]/g, '')
+                    .replace(/\[PendingHotel:.*?\]/g, '')
+                    .replace(/\[Action:.*?\]/g, '')
+                    .replace(/[*_#`~]/g, '');
+                
+                const utterance = new SpeechSynthesisUtterance(cleanTextForSpeech);
+                
+                const stopBtn = document.createElement("div");
+                stopBtn.className = "ai-tts-stop";
+                stopBtn.textContent = "🔇 Stop speaking";
+                stopBtn.style.display = "block";
+                stopBtn.onclick = () => {
+                    window.speechSynthesis.cancel();
+                    stopBtn.style.display = "none";
+                };
+                msgEl.querySelector(".chat-msg-body").appendChild(stopBtn);
+                
+                utterance.onend = () => { stopBtn.style.display = "none"; };
+                
+                window.speechSynthesis.speak(utterance);
+            }
         } catch (e) {
             hideAITyping();
             appendAIMessage("assistant", "Sorry, I couldn't process your request. Please try again later.");
@@ -373,6 +502,8 @@
             }
             container.scrollTop = container.scrollHeight;
         });
+        
+        return div;
     }
 
     // ── Admin action handlers ──────────────────────────────────────────────
