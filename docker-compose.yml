@@ -25,7 +25,8 @@ services:
 
   api:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: hrms-api
     restart: unless-stopped
     ports:

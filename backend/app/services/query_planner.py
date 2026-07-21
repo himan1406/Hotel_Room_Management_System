@@ -69,13 +69,25 @@ If nothing is mentioned, leave the array empty.
 
 ### PART 2 — QUERIES
 Based on the user's message, the conversation history, and your role,
-decide what data is needed. For each piece of data, choose ONE of:
+decide what data is needed. You may choose ONE tool or MULTIPLE tools
+if the question requires data from different sources. If the question has
+two distinct information needs (e.g. "show my bookings AND their cancellation
+policies"), include TWO queries in the array.
+
+Available tools:
 
 {formatted_tools}
 
 ### ROLE-SPECIFIC RULES
 
 {role_specific_instructions}
+
+**Tip for compound questions:** If the user asks something like
+"show my bookings and their cancellation policies",
+you need BOTH CUSTOMER_BOOKINGS (to get your booking data) AND
+VECTOR_SEARCH (to look up the policies). Always check whether the
+question needs data from documents + database combined, and include
+multiple queries in the array when appropriate.
 
 ──────────────────────────────────────────────────────────────────────────
 OUTPUT FORMAT
@@ -84,18 +96,50 @@ OUTPUT FORMAT
 Respond with ONLY the JSON object below. No markdown, no explanation,
 no extra text — just valid JSON.
 
+The "queries" array can have ONE entry for simple questions, or
+MULTIPLE entries for compound questions.
+
+Example — simple question (one tool):
 {{
   "resolve": {{
-    "property_names": ["...", "..."],
-    "locations": ["...", "..."],
-    "doc_types": ["..."]
+    "property_names": ["Grand Plaza"],
+    "locations": [],
+    "doc_types": []
   }},
   "queries": [
     {{
       "type": "tool",
-      "name": "TOOL_NAME",
+      "name": "VECTOR_SEARCH",
       "params": {{
-        "param1": "value1"
+        "query": "What are the pool hours?",
+        "limit": 6
+      }}
+    }}
+  ]
+}}
+
+Example — compound question (multiple tools):
+{{
+  "resolve": {{
+    "property_names": [],
+    "locations": [],
+    "doc_types": ["cancellation_policy"]
+  }},
+  "queries": [
+    {{
+      "type": "tool",
+      "name": "CUSTOMER_BOOKINGS",
+      "params": {{
+        "status": "confirmed",
+        "limit": 5
+      }}
+    }},
+    {{
+      "type": "tool",
+      "name": "VECTOR_SEARCH",
+      "params": {{
+        "query": "cancellation policy",
+        "limit": 6
       }}
     }}
   ]

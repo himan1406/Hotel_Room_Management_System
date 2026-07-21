@@ -1,0 +1,36 @@
+# Node
+node_modules/
+frontend/node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+backend/.venv
+backend/venv
+
+# Env
+.env
+backend/.env
+
+# Git
+.git/
+.gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+docker-compose.yml
+.dockerignore
+
+# Alembic
+backend/alembic/versions/*.pyc
+
+# Temp
+*.log

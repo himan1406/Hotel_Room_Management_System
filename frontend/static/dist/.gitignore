@@ -1,0 +1,3 @@
+# Ignore the bundled JS output — regenerate with `cd frontend && npm run build`
+bundle.min.js
+_combined.js
