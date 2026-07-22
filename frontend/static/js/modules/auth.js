@@ -1,15 +1,24 @@
 // ==================== Auth ====================
+let _checkAuthPromise = null;
+
 async function checkAuth() {
-    try {
-        const user = await API.get("/api/auth/me");
-        updateNav(user);
-        connectWebSocket();
-        return user;
-    } catch {
-        updateNav(null);
-        disconnectWebSocket();
-        return null;
-    }
+    // Cache the in-flight promise so concurrent callers share the same HTTP request.
+    // This prevents redundant /api/auth/me calls when both app.js and chatbot.js
+    // need the user on DOMContentLoaded.
+    if (_checkAuthPromise) return _checkAuthPromise;
+    _checkAuthPromise = (async () => {
+        try {
+            const user = await API.get("/api/auth/me");
+            updateNav(user);
+            connectWebSocket();
+            return user;
+        } catch {
+            updateNav(null);
+            disconnectWebSocket();
+            return null;
+        }
+    })();
+    return _checkAuthPromise;
 }
 
 function updateNav(user) {

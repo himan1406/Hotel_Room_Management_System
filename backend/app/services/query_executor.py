@@ -66,9 +66,20 @@ def _inject_entity_ids(
     from TOOL_REGISTRY to decide what to inject.  Currently supports:
 
       - **property_ids**: injected from resolved property names, or
-        derived from resolved locations if no named properties matched.
+        derived from resolved locations (e.g. "hotels in Gurugram"
+        → find all approved properties in Gurugram), then merged with
+        any context/named property IDs so both are included.
       - **doc_type**: injected from resolved doc types (only if exactly
         one type resolved, to avoid ambiguity).
+
+    **Why merging?**
+    When a user is viewing a property detail page, the context property
+    ID is injected into resolve_result (see run_pipeline). If the user
+    then asks about a different location (e.g. "properties in Jaipur"
+    while viewing a Delhi property), we MUST still search that location's
+    properties. Merging ensures both the context property AND the
+    location-derived properties are included — the Answer Generator LLM
+    can then decide what's relevant.
 
     If the tool doesn't declare the param in its schema, nothing is
     injected — this keeps the logic future-proof as new tools are
@@ -95,27 +106,35 @@ def _inject_entity_ids(
     if "property_ids" in schema:
         already_set = "property_ids" in params and params["property_ids"]
         if not already_set:
-            resolved_ids = resolve_result.get("property_ids", [])
+            # Step 1: Get any context-injected or named-property IDs
+            # (e.g. context property from the page the user is viewing,
+            # or properties the Planner explicitly resolved by name).
+            context_ids = resolve_result.get("property_ids", [])
 
-            # If no property IDs from named entities, try deriving from
-            # resolved locations (e.g. "hotels in Gurugram" → find all
-            # approved properties in the Gurugram location).
-            if not resolved_ids:
-                location_ids = resolve_result.get("location_ids", [])
-                if location_ids:
-                    location_props = (
-                        db.query(Property.id)
-                        .filter(
-                            Property.city_id.in_(location_ids),
-                            Property.is_approved == True,   # noqa: E712
-                            Property.is_active == True,     # noqa: E712
-                        )
-                        .all()
+            # Step 2: ALWAYS derive from resolved locations when they exist.
+            # This prevents context injection from blocking location-based
+            # searches (e.g. "properties in Jaipur" while viewing a Delhi property).
+            location_ids = resolve_result.get("location_ids", [])
+            derived_ids: list[str] = []
+            if location_ids:
+                location_props = (
+                    db.query(Property.id)
+                    .filter(
+                        Property.city_id.in_(location_ids),
+                        Property.is_approved == True,   # noqa: E712
+                        Property.is_active == True,     # noqa: E712
                     )
-                    resolved_ids = [str(p.id) for p in location_props]
+                    .all()
+                )
+                derived_ids = [str(p.id) for p in location_props]
 
-            if resolved_ids:
-                params["property_ids"] = resolved_ids
+            # Step 3: Merge — context/named properties first, then
+            # location-derived properties. Deduplicate while preserving
+            # order so the context property (when relevant) is the primary.
+            merged = list(dict.fromkeys(context_ids + derived_ids))
+
+            if merged:
+                params["property_ids"] = merged
 
     # ── Inject doc_type ────────────────────────────────────────────────
     if "doc_type" in schema:

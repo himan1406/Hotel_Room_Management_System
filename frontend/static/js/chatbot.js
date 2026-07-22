@@ -121,13 +121,11 @@
     });
 
     async function fetchUserRole() {
-        try {
-            const res = await fetch("/api/auth/me", { credentials: "include" });
-            if (res.ok) {
-                const user = await res.json();
-                aiUserRole = user.role;
-            }
-        } catch {}
+        // Reuse the global checkAuth() instead of making a separate HTTP request.
+        // checkAuth() caches its promise, so if app.js already called it,
+        // this returns the cached result — only 1 network call to /api/auth/me.
+        const user = await checkAuth();
+        aiUserRole = user?.role || null;
     }
 
     window.openAIChat = function () {

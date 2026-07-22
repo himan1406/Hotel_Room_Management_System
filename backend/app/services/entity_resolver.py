@@ -114,7 +114,6 @@ def resolve_property_names(
             .outerjoin(LocationParent, Location.parent_id == LocationParent.id)
             .filter(or_(*ilike_conditions))
             .order_by(Property.trending_score.desc())
-            .limit(limit)
         )
 
         if not include_unapproved:
@@ -122,6 +121,8 @@ def resolve_property_names(
                 Property.is_approved == True,  # noqa: E712
                 Property.is_active == True,    # noqa: E712
             )
+            
+        query = query.limit(limit)
 
         for prop in query.all():
             prop_id = str(prop.id)
