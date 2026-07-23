@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.llm import ask_llm
-from app.models.db_models import Property, User, UserRole
+from app.models.db_models import Location, Property, User, UserRole
 from app.services.entity_resolver import resolve_all
 from app.services.query_planner import (
     PlanParseError,
@@ -25,8 +25,9 @@ logger = logging.getLogger(__name__)
 def _build_fallback_plan(message: str) -> dict:
     """Build a safe fallback plan when the Planner LLM fails.
 
-    Falls back to a simple VECTOR_SEARCH with the user's message as the query.
-    No entity resolution is attempted in the fallback.
+    Uses PROPERTY_SEARCH as the primary fallback since most user queries
+    are about finding or browsing properties. Also includes a VECTOR_SEARCH
+    to cover document-related questions.
 
     Args:
         message: The user's original message.
@@ -43,9 +44,14 @@ def _build_fallback_plan(message: str) -> dict:
         "queries": [
             {
                 "type": "tool",
+                "name": "PROPERTY_SEARCH",
+                "params": {"location": message, "limit": 8},
+            },
+            {
+                "type": "tool",
                 "name": "VECTOR_SEARCH",
                 "params": {"query": message, "limit": 6},
-            }
+            },
         ],
     }
 
@@ -115,18 +121,76 @@ def _inject_entity_ids(
             # This prevents context injection from blocking location-based
             # searches (e.g. "properties in Jaipur" while viewing a Delhi property).
             location_ids = resolve_result.get("location_ids", [])
+            locations_data = resolve_result.get("locations", [])
             derived_ids: list[str] = []
             if location_ids:
-                location_props = (
-                    db.query(Property.id)
-                    .filter(
-                        Property.city_id.in_(location_ids),
-                        Property.is_approved == True,   # noqa: E712
-                        Property.is_active == True,     # noqa: E712
+                # Collect all city-level IDs from the resolved locations.
+                # Resolved locations may be states or countries, so we need
+                # to walk down the hierarchy to find descendant cities.
+                city_ids: list[str] = []
+                for loc in locations_data:
+                    loc_type = loc.get("type")
+                    loc_id = loc.get("id")
+                    if not loc_id:
+                        continue
+                    if loc_type == "city":
+                        city_ids.append(loc_id)
+                    elif loc_type in ("state", "country"):
+                        # Find all descendant cities via recursive CTE
+                        from sqlalchemy import text
+                        cte_sql = text("""
+                            WITH RECURSIVE loc_tree AS (
+                                SELECT id, parent_id FROM locations WHERE id = :root_id
+                                UNION ALL
+                                SELECT l.id, l.parent_id
+                                FROM locations l
+                                INNER JOIN loc_tree lt ON l.parent_id = lt.id
+                            )
+                            SELECT id FROM loc_tree WHERE id != :root_id
+                        """)
+                        descendant_rows = db.execute(
+                            cte_sql, {"root_id": loc_id}
+                        ).fetchall()
+                        descendant_ids = [str(r[0]) for r in descendant_rows]
+                        # Filter to only city-level descendants
+                        if descendant_ids:
+                            city_descendants = (
+                                db.query(Property.id)
+                                .join(Location, Property.city_id == Location.id)
+                                .filter(
+                                    Location.id.in_(descendant_ids),
+                                    Location.type == "city",
+                                )
+                                .all()
+                            )
+                            city_ids.extend(str(r[0]) for r in city_descendants)
+                    elif loc_type == "district":
+                        # For districts, find properties directly by district_id
+                        # or find the parent city
+                        from sqlalchemy import text
+                        parent_sql = text(
+                            "SELECT parent_id FROM locations WHERE id = :loc_id"
+                        )
+                        parent_row = db.execute(
+                            parent_sql, {"loc_id": loc_id}
+                        ).fetchone()
+                        if parent_row and parent_row[0]:
+                            city_ids.append(str(parent_row[0]))
+
+                # Deduplicate
+                city_ids = list(dict.fromkeys(city_ids))
+
+                if city_ids:
+                    location_props = (
+                        db.query(Property.id)
+                        .filter(
+                            Property.city_id.in_(city_ids),
+                            Property.is_approved == True,   # noqa: E712
+                            Property.is_active == True,     # noqa: E712
+                        )
+                        .all()
                     )
-                    .all()
-                )
-                derived_ids = [str(p.id) for p in location_props]
+                    derived_ids = [str(p.id) for p in location_props]
 
             # Step 3: Merge — context/named properties first, then
             # location-derived properties. Deduplicate while preserving
@@ -466,6 +530,26 @@ def _extract_sources(tool_results: dict[str, dict]) -> list[dict]:
                 ),
                 "property_id": None,
             })
+
+        # For PROPERTY_SEARCH
+        elif tool_name == "PROPERTY_SEARCH":
+            data = result.get("data", {})
+            props = data.get("properties", [])
+            for p in props[:5]:
+                city_state = ", ".join(
+                    filter(None, [p.get("city", ""), p.get("state", "")])
+                )
+                sources.append({
+                    "title": p.get("name", "Unknown"),
+                    "doc_type": "property_listing",
+                    "score": 1.0,
+                    "snippet": (
+                        f"{p.get('name', '')} — {p.get('property_type', 'hotel')} "
+                        f"in {city_state}, "
+                        f"rating {p.get('avg_rating', 0)}★"
+                    ),
+                    "property_id": p.get("id"),
+                })
 
     return sources
 

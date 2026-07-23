@@ -14,11 +14,11 @@ import logging
 import uuid
 from datetime import date as date_type
 
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from app.models.db_models import (
-    Availability, Booking, BookingStatus, DocType, Property,
+    Availability, Booking, BookingStatus, DocType, Location, Property,
     PropertyDocument, Review, Room, User, UserRole,
     PendingHotelRegistration, PendingStatus,
 )
@@ -349,6 +349,48 @@ TOOL_REGISTRY = {
             },
         },
         "allowed_roles": ["admin"],
+    },
+
+    "PROPERTY_SEARCH": {
+        "description": (
+            "Search and list properties (hotels, resorts, villas, homestays, etc.) "
+            "by location, type, rating, and amenities. Returns property listings "
+            "with name, type, location, rating, price, and amenities. "
+            "Use this when the user asks to find, list, show, or browse "
+            "properties — e.g. 'resorts in Uttarakhand', 'hotels in Goa', "
+            "'show me 5-star properties in Manali', 'villas near Delhi'."
+        ),
+        "params_schema": {
+            "location": {
+                "type": "string",
+                "required": False,
+                "description": (
+                    "Free-text location to search (matches city name, state name, "
+                    "district name, property name, or address)"
+                ),
+            },
+            "property_type": {
+                "type": "string",
+                "required": False,
+                "description": (
+                    "Filter by property type: hotel, resort, villa, homestay, "
+                    "heritage, or hostel"
+                ),
+            },
+            "min_rating": {
+                "type": "number",
+                "required": False,
+                "description": "Minimum average rating (0.0 to 5.0)",
+            },
+            "limit": {
+                "type": "integer",
+                "required": False,
+                "default": 8,
+                "min": 1,
+                "max": 20,
+            },
+        },
+        "allowed_roles": ["customer", "hotel_rep", "admin", None],
     },
 }
 
@@ -1274,7 +1316,123 @@ def handle_admin_rep_list(
 
 
 # ═══════════════════════════════════════════════════════════════
-# 13.  HANDLER: Customer — My Bookings
+# 13.  HANDLER: Property Search (Customer-facing discovery)
+# ═══════════════════════════════════════════════════════════════
+
+def handle_property_search(
+    db: Session,
+    user: User | None,
+    location: str | None = None,
+    property_type: str | None = None,
+    min_rating: float | None = None,
+    limit: int = 8,
+) -> dict:
+    """Search and list properties by location, type, and rating.
+
+    Mirrors the REST search endpoint logic but tailored for the RAG pipeline.
+    Joins Property → City (Location) → State (Location.parent) to enable
+    search across the full location hierarchy.
+
+    Args:
+        db: Database session.
+        user: Current user (may be None for guests).
+        location: Free-text location search (matches city, state, district, name, address).
+        property_type: Optional filter (hotel, resort, villa, homestay, heritage, hostel).
+        min_rating: Optional minimum average rating.
+        limit: Max results (1-20, default 8).
+
+    Returns:
+        Dict with success, data, and formatted keys.
+    """
+    from sqlalchemy.orm import aliased
+
+    city_alias = aliased(Location)
+    state_alias = aliased(Location)
+
+    q = (
+        db.query(Property)
+        .outerjoin(city_alias, Property.city_id == city_alias.id)
+        .outerjoin(state_alias, city_alias.parent_id == state_alias.id)
+        .filter(Property.is_approved == True, Property.is_active == True)  # noqa: E712
+    )
+
+    if location:
+        like = f"%{location.strip()}%"
+        q = q.filter(or_(
+            Property.name.ilike(like),
+            Property.address.ilike(like),
+            city_alias.name.ilike(like),
+            state_alias.name.ilike(like),
+        ))
+
+    if property_type:
+        q = q.filter(Property.property_type == property_type)
+
+    if min_rating is not None:
+        q = q.filter(Property.avg_rating >= min_rating)
+
+    q = q.order_by(Property.trending_score.desc()).limit(min(limit, 20))
+
+    properties = q.all()
+
+    if not properties:
+        return {
+            "success": True,
+            "data": {"properties": []},
+            "formatted": "No properties found matching your criteria.",
+        }
+
+    lines = [f"Found {len(properties)} propert{'y' if len(properties) == 1 else 'ies'}:"]
+    data_props = []
+
+    for p in properties:
+        city_name = p.city.name if p.city else "Unknown"
+        state_name = p.city.parent.name if p.city and p.city.parent else ""
+        full_location = ", ".join(filter(None, [city_name, state_name]))
+
+        prop_type = p.property_type.value if p.property_type else "hotel"
+        rating = p.avg_rating or 0
+        review_count = p.review_count or 0
+
+        rooms = (
+            db.query(Room)
+            .filter(Room.property_id == p.id, Room.is_active == True)  # noqa: E712
+            .all()
+        )
+        prices = [r.base_price for r in rooms]
+        price_range = f"₹{min(prices):,.0f}-₹{max(prices):,.0f}/night" if prices else "N/A"
+
+        amenities = [k.replace("_", " ") for k, v in (p.amenities or {}).items() if v][:5]
+
+        lines.append(
+            f"  - {p.name} [PropertyCard: {p.id}] | {prop_type} | "
+            f"{full_location} | {rating}★ ({review_count} reviews) | "
+            f"{price_range}"
+            + (f" | Amenities: {', '.join(amenities)}" if amenities else "")
+        )
+
+        data_props.append({
+            "id": str(p.id),
+            "name": p.name,
+            "property_type": prop_type,
+            "city": city_name,
+            "state": state_name,
+            "address": p.address,
+            "avg_rating": float(rating),
+            "review_count": review_count,
+            "price_range": price_range,
+            "amenities": amenities,
+        })
+
+    return {
+        "success": True,
+        "data": {"properties": data_props},
+        "formatted": "\n".join(lines),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# 14.  HANDLER: Customer — My Bookings
 # ═══════════════════════════════════════════════════════════════
 
 def handle_customer_bookings(
@@ -1491,6 +1649,7 @@ HANDLER_MAP: dict[str, object] = {
     "REP_REVENUE_ANALYTICS": handle_rep_revenue_analytics,
     "MUTATION_REPLY_TO_REVIEW": handle_mutation_reply_to_review,
     "MUTATION_UPDATE_PROPERTY": handle_mutation_update_property,
+    "PROPERTY_SEARCH": handle_property_search,
 }
 
 
