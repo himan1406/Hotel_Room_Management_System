@@ -18,7 +18,7 @@ from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from app.models.db_models import (
-    Availability, Booking, BookingStatus, DocType, Location, Property,
+    Availability, Booking, BookingGroup, BookingStatus, DocType, Location, Property,
     PropertyDocument, Review, Room, User, UserRole,
     PendingHotelRegistration, PendingStatus,
 )
@@ -293,14 +293,79 @@ TOOL_REGISTRY = {
     },
     "MUTATION_CANCEL_BOOKING": {
         "description": (
-            "Cancel an existing booking. "
+            "Cancel an existing individual booking. "
+            "Requires the UUID of a specific booking. "
             "Requires confirmation before execution."
         ),
         "params_schema": {
             "booking_id": {
                 "type": "string",
                 "required": True,
-                "description": "UUID of the booking to cancel",
+                "description": "UUID of the individual booking to cancel",
+            },
+        },
+        "allowed_roles": ["customer"],
+        "requires_confirmation": True,
+    },
+    "MUTATION_CANCEL_GROUP": {
+        "description": (
+            "Cancel an entire booking group (all rooms in a multi-room stay). "
+            "Use this when the user says 'cancel my booking' or 'cancel my stay' "
+            "and they have a group booking (multiple rooms booked together). "
+            "Requires the group_id (UUID of the BookingGroup). "
+            "Requires confirmation before execution."
+        ),
+        "params_schema": {
+            "group_id": {
+                "type": "string",
+                "required": True,
+                "description": "UUID of the booking group to cancel",
+            },
+        },
+        "allowed_roles": ["customer"],
+        "requires_confirmation": True,
+    },
+
+    "MUTATION_CONFIRM_BOOKING": {
+        "description": (
+            "Confirm and create a booking at a specific property. "
+            "After the user has seen booking options via CHAT_PLAN_BOOKING, "
+            "use this tool to actually create the booking when the user says "
+            "'confirm', 'book it', 'yes do it', etc. Requires the property_id, "
+            "dates, guests, and which combination to use (cheapest/recommended). "
+            "Requires the user to be logged in as a customer."
+        ),
+        "params_schema": {
+            "property_id": {
+                "type": "string",
+                "required": False,
+                "description": "UUID of the property (injected by entity resolution if not provided)",
+            },
+            "check_in": {
+                "type": "string",
+                "required": False,
+                "description": "Check-in date in YYYY-MM-DD format (or human-readable like '25th july')",
+            },
+            "check_out": {
+                "type": "string",
+                "required": False,
+                "description": "Check-out date in YYYY-MM-DD format (or human-readable like '28th july')",
+            },
+            "num_adults": {
+                "type": "integer",
+                "required": True,
+                "description": "Number of adult guests",
+            },
+            "num_children": {
+                "type": "integer",
+                "required": False,
+                "default": 0,
+                "description": "Number of child guests",
+            },
+            "combination": {
+                "type": "string",
+                "required": True,
+                "description": "Which combination to book: 'cheapest' or 'recommended'",
             },
         },
         "allowed_roles": ["customer"],
@@ -391,6 +456,45 @@ TOOL_REGISTRY = {
             },
         },
         "allowed_roles": ["customer", "hotel_rep", "admin", None],
+    },
+
+    "CHAT_PLAN_BOOKING": {
+        "description": (
+            "Compute room combinations for a booking request at a specific property. "
+            "Given dates and guest counts, finds the cheapest and recommended "
+            "combinations of rooms that can accommodate all guests. "
+            "Use this when the user wants to book rooms, mentions dates and "
+            "number of guests, or asks about booking options at a property."
+        ),
+        "params_schema": {
+            "property_id": {
+                "type": "string",
+                "required": False,
+                "description": "UUID of the property (injected by entity resolution if not provided)",
+            },
+            "check_in": {
+                "type": "string",
+                "required": False,
+                "description": "Check-in date in YYYY-MM-DD format (or human-readable like '25th july')",
+            },
+            "check_out": {
+                "type": "string",
+                "required": False,
+                "description": "Check-out date in YYYY-MM-DD format (or human-readable like '28th july')",
+            },
+            "num_adults": {
+                "type": "integer",
+                "required": True,
+                "description": "Number of adult guests",
+            },
+            "num_children": {
+                "type": "integer",
+                "required": False,
+                "default": 0,
+                "description": "Number of child guests",
+            },
+        },
+        "allowed_roles": ["customer", None],
     },
 }
 
@@ -1405,7 +1509,7 @@ def handle_property_search(
         amenities = [k.replace("_", " ") for k, v in (p.amenities or {}).items() if v][:5]
 
         lines.append(
-            f"  - {p.name} [PropertyCard: {p.id}] | {prop_type} | "
+            f"  - {p.name} (ID: {p.id}) | {prop_type} | "
             f"{full_location} | {rating}★ ({review_count} reviews) | "
             f"{price_range}"
             + (f" | Amenities: {', '.join(amenities)}" if amenities else "")
@@ -1427,6 +1531,244 @@ def handle_property_search(
     return {
         "success": True,
         "data": {"properties": data_props},
+        "formatted": "\n".join(lines),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# 13b.  HANDLER: Chat Booking Planner
+# ═══════════════════════════════════════════════════════════════
+
+
+
+def _parse_date_flexible(date_str: str) -> date_type | None:
+    """Try to parse a date string in various formats.
+    
+    Handles: YYYY-MM-DD, DD/MM/YYYY, "25th july 2026", "July 25, 2026",
+    "25 july", "july 25", etc. If year is missing, assumes current year
+    (or next year if the date has already passed).
+    
+    Args:
+        date_str: A date string in various formats.
+    
+    Returns:
+        A date object, or None if parsing failed.
+    """
+    import re as _re
+    
+    s = date_str.strip().lower()
+    
+    # Try ISO format first (YYYY-MM-DD)
+    try:
+        return date_type.fromisoformat(s)
+    except ValueError:
+        pass
+    
+    # Try DD/MM/YYYY or DD-MM-YYYY
+    m = _re.match(r'^(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})$', s)
+    if m:
+        try:
+            return date_type(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            pass
+    
+    # Try "25th july 2026", "25 july 2026", "july 25 2026", etc.
+    month_names = {
+        'january': 1, 'february': 2, 'march': 3, 'april': 4,
+        'may': 5, 'june': 6, 'july': 7, 'august': 8,
+        'september': 9, 'october': 10, 'november': 11, 'december': 12,
+        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'jun': 6,
+        'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+    }
+    
+    # Pattern: "25th july 2026" or "25 july 2026"
+    m = _re.match(r'^(\d{1,2})(?:st|nd|rd|th)?\s+(\w+)(?:\s+(\d{4}))?$', s)
+    if m:
+        day = int(m.group(1))
+        month_name = m.group(2)
+        year_str = m.group(3)
+        if month_name in month_names:
+            month = month_names[month_name]
+            year = int(year_str) if year_str else date_type.today().year
+            try:
+                d = date_type(year, month, day)
+                if not year_str and d < date_type.today():
+                    d = date_type(year + 1, month, day)
+                return d
+            except ValueError:
+                pass
+    
+    # Pattern: "july 25 2026" or "july 25th 2026"
+    m = _re.match(r'^(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+(\d{4}))?$', s)
+    if m:
+        month_name = m.group(1)
+        day = int(m.group(2))
+        year_str = m.group(3)
+        if month_name in month_names:
+            month = month_names[month_name]
+            year = int(year_str) if year_str else date_type.today().year
+            try:
+                d = date_type(year, month, day)
+                if not year_str and d < date_type.today():
+                    d = date_type(year + 1, month, day)
+                return d
+            except ValueError:
+                pass
+    
+    return None
+
+def handle_chat_plan_booking(
+    db: Session,
+    user: User | None,
+    check_in: str,
+    check_out: str,
+    num_adults: int,
+    num_children: int = 0,
+    property_id: str | None = None,
+) -> dict:
+    """Compute room combinations for a booking request.
+
+    Uses the room_combiner service to find the cheapest and recommended
+    room combinations that can accommodate all guests at the given property.
+
+    Args:
+        db: Database session.
+        user: Current user (may be None for guests).
+        check_in: Check-in date string (YYYY-MM-DD).
+        check_out: Check-out date string (YYYY-MM-DD).
+        num_adults: Number of adult guests.
+        num_children: Number of child guests.
+        property_id: UUID string of the property (injected by entity resolution).
+
+    Returns:
+        Dict with success, data, and formatted keys.
+    """
+    from datetime import date as date_type
+    from app.services.room_combiner import compute_booking_options
+    from app.models.db_models import Property
+
+    # Validate property_id
+    if not property_id:
+        return {
+            "success": False,
+            "data": None,
+            "formatted": (
+                "I couldn't determine which property you'd like to book. "
+                "Could you please mention the property name?"
+            ),
+        }
+
+    try:
+        pid = uuid.UUID(property_id)
+    except ValueError:
+        return {
+            "success": False,
+            "data": None,
+            "formatted": f"Invalid property ID: '{property_id}'",
+        }
+
+    # Verify property exists
+    prop = db.query(Property).filter(Property.id == pid).first()
+    if not prop:
+        return {
+            "success": False,
+            "data": None,
+            "formatted": "Property not found.",
+        }
+
+    # Check for missing dates (optional params, ask user if not provided)
+    if not check_in or not check_out:
+        return {
+            "success": False,
+            "data": None,
+            "formatted": (
+                f"Property: {prop.name} [PropertyCard: {prop.id}]\n"
+                f"I found {prop.name}! Could you please tell me your check-in "
+                f"and check-out dates so I can check room availability?"
+            ),
+        }
+
+    # Parse dates (flexible - accepts ISO, "25th july", etc.)
+    ci = _parse_date_flexible(check_in)
+    co = _parse_date_flexible(check_out)
+    if ci is None or co is None:
+        return {
+            "success": False,
+            "data": None,
+            "formatted": "Invalid date format. Please use YYYY-MM-DD or a common date format like '25th july'.",
+        }
+
+    if co <= ci:
+        return {
+            "success": False,
+            "data": None,
+            "formatted": "Check-out date must be after check-in date.",
+        }
+
+    if ci < date_type.today():
+        return {
+            "success": False,
+            "data": None,
+            "formatted": "Check-in date cannot be in the past.",
+        }
+
+    # Compute options
+    options = compute_booking_options(
+        db=db,
+        property_id=pid,
+        check_in=ci,
+        check_out=co,
+        num_adults=num_adults,
+        num_children=num_children,
+    )
+
+    cheapest = options.get("cheapest")
+    recommended = options.get("recommended")
+    nights = options.get("nights", 0)
+
+    if not cheapest and not recommended:
+        return {
+            "success": True,
+            "data": options,
+            "formatted": (
+                f"Property: {prop.name} [PropertyCard: {prop.id}]\n"
+                f"Unfortunately, {prop.name} doesn't have enough available "
+                f"rooms to accommodate {num_adults} adults"
+                + (f" and {num_children} children" if num_children else "")
+                + f" from {check_in} to {check_out}. "
+                "You may want to try different dates or a different property."
+            ),
+        }
+
+    lines = [
+        f"Property: {prop.name} [PropertyCard: {prop.id}]",
+        f"Booking options for {prop.name} ({nights} nights, "
+        f"{num_adults} adults"
+        + (f", {num_children} children" if num_children else "")
+        + "):",
+    ]
+
+    if cheapest:
+        lines.append("")
+        lines.append(f"Cheapest: ₹{cheapest['total_price']:,.0f} total")
+        for r in cheapest["rooms"]:
+            lines.append(
+                f"  - {r['qty']}x {r['room_type']} @ ₹{r['price_per_night']:,.0f}/night/room "
+                f"× {nights} nights = ₹{r['subtotal']:,.0f}"
+            )
+
+    if recommended and (not cheapest or recommended["total_price"] != cheapest["total_price"]):
+        lines.append("")
+        lines.append(f"Recommended: ₹{recommended['total_price']:,.0f} total")
+        for r in recommended["rooms"]:
+            lines.append(
+                f"  - {r['qty']}x {r['room_type']} @ ₹{r['price_per_night']:,.0f}/night/room "
+                f"× {nights} nights = ₹{r['subtotal']:,.0f}"
+            )
+
+    return {
+        "success": True,
+        "data": options,
         "formatted": "\n".join(lines),
     }
 
@@ -1473,6 +1815,7 @@ def handle_customer_bookings(
             Booking.status,
             Booking.total_price,
             Booking.created_at,
+            Booking.group_id,
             Room.room_type,
             Property.name.label("property_name"),
             Property.id.label("property_id"),
@@ -1516,6 +1859,7 @@ def handle_customer_bookings(
             "status": status_str,
             "total_price": float(row.total_price) if row.total_price else 0,
             "booked_at": row.created_at.isoformat() if row.created_at else None,
+            "group_id": str(row.group_id) if row.group_id else None,
         })
 
     # Build formatted text
@@ -1532,8 +1876,10 @@ def handle_customer_bookings(
         guests = f"{b['num_adults']} adults"
         if b["num_children"]:
             guests += f", {b['num_children']} children"
+        gid = b.get("group_id", "")
+        group_tag = f" [Group: {gid[:8]}...]" if gid else ""
         detail_lines.append(
-            f"  - {b['property_name']} ({b['room_type']}) | "
+            f"  - {b['property_name']} ({b['room_type']}){group_tag} | "
             f"{ci} → {co} | {guests} | "
             f"{b['status'].title()} | ₹{b['total_price']:,.0f}"
         )
@@ -1567,6 +1913,225 @@ def handle_mutation_cancel_booking(db: Session, user: User, booking_id: str) -> 
     db.commit()
     return {"success": True, "message": "Booking successfully cancelled."}
 
+
+def handle_mutation_cancel_group(db: Session, user: User, group_id: str) -> dict:
+    """Cancel an entire booking group (all rooms in a multi-room stay).
+
+    Finds the BookingGroup by group_id, verifies it belongs to the user,
+    and cancels all active bookings (pending or confirmed) in that group.
+    """
+    try:
+        gid = uuid.UUID(group_id)
+    except ValueError:
+        return {"success": False, "message": "Invalid group_id format"}
+
+    group = db.query(BookingGroup).filter(
+        BookingGroup.id == gid,
+        BookingGroup.customer_id == user.id,
+    ).first()
+    if not group:
+        return {"success": False, "message": "Booking group not found"}
+
+    bookings = db.query(Booking).filter(
+        Booking.group_id == group.id,
+        Booking.status.in_([BookingStatus.pending, BookingStatus.confirmed]),
+    ).all()
+    if not bookings:
+        return {"success": False, "message": "No active bookings in this group"}
+
+    for b in bookings:
+        b.status = BookingStatus.cancelled
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"✅ Cancelled {len(bookings)} booking(s) at {group.property.name if group.property else 'the property'}.",
+    }
+
+
+def handle_mutation_confirm_booking(
+    db: Session,
+    user: User,
+    property_id: str,
+    check_in: str,
+    check_out: str,
+    num_adults: int,
+    num_children: int = 0,
+    combination: str = "cheapest",
+) -> dict:
+    """Confirm and create a booking from chat.
+
+    Re-computes room options, then creates a BookingGroup and individual
+    Booking rows for the selected combination. This is the chat equivalent
+    of clicking 'Confirm Booking' in the frontend BookingCard.
+    """
+    from datetime import date as date_type
+    from app.services.room_combiner import compute_booking_options
+
+    # Validate property_id
+    if not property_id:
+        return {"success": False, "message": "Could not determine the property name from context. Please mention the property name.", "error": "Missing property_id"}
+    try:
+        pid = uuid.UUID(property_id)
+    except ValueError:
+        return {"success": False, "message": f"Invalid property_id format: '{property_id}'", "error": "Invalid property_id format"}
+
+    # Verify property
+    prop = db.query(Property).filter(
+        Property.id == pid,
+        Property.is_approved == True,  # noqa: E712
+        Property.is_active == True,  # noqa: E712
+    ).first()
+    if not prop:
+        return {"success": False, "message": "Property not found or not available", "error": "Property not found"}
+
+    if combination not in ("cheapest", "recommended"):
+        return {"success": False, "message": f"Invalid combination '{combination}'.", "error": "Invalid combination"}
+
+    # Check for missing dates
+    if not check_in or not check_out:
+        return {
+            "success": False,
+            "message": (
+                f"I need check-in and check-out dates to confirm the booking "
+                f"at {prop.name}. Could you please provide them?"
+            ),
+        }
+
+    # Parse dates
+    try:
+        ci = date_type.fromisoformat(check_in)
+        co = date_type.fromisoformat(check_out)
+    except ValueError:
+        return {"success": False, "message": "Invalid date format. Use YYYY-MM-DD.", "error": "Invalid date format"}
+
+    if co <= ci:
+        return {"success": False, "message": "Check-out must be after check-in", "error": "Invalid date range"}
+    if ci < date_type.today():
+        return {"success": False, "message": "Check-in cannot be in the past", "error": "Past check-in date"}
+
+    # Re-compute options
+    options = compute_booking_options(
+        db=db,
+        property_id=pid,
+        check_in=ci,
+        check_out=co,
+        num_adults=num_adults,
+        num_children=num_children,
+    )
+
+    selected = options.get(combination)
+    if not selected:
+        return {
+            "success": False,
+            "message": f"No {combination} combination available for these dates and guests.",
+        }
+
+    nights = options.get("nights", 0)
+
+    # Create BookingGroup
+    group = BookingGroup(
+        customer_id=user.id,
+        property_id=pid,
+        check_in=ci,
+        check_out=co,
+        num_adults=num_adults,
+        num_children=num_children,
+        total_price=selected["total_price"],
+    )
+    db.add(group)
+    db.flush()
+
+    # Create individual bookings for each room type in the combination
+    created_bookings = []
+
+    for room_group in selected["rooms"]:
+        room_id = uuid.UUID(room_group["room_id"])
+        qty = room_group["qty"]
+
+        # Lock the room row
+        room = db.query(Room).filter(
+            Room.id == room_id, Room.is_active == True  # noqa: E712
+        ).with_for_update().first()
+        if not room:
+            db.rollback()
+            return {"success": False, "message": f"Room {room_group['room_type']} is no longer available", "error": "Room unavailable"}
+
+        if str(room.property_id) != str(pid):
+            db.rollback()
+            return {"success": False, "message": "Room does not belong to this property", "error": "Room mismatch"}
+
+        # Verify availability
+        from app.services.availability import evaluate_room_for_dates
+        available, total_price = evaluate_room_for_dates(db, room, ci, co)
+        if not available:
+            db.rollback()
+            return {"success": False, "message": f"Room {room.room_type} is no longer available for these dates", "error": "Room unavailable"}
+
+        # Distribute guests across rooms
+        adults_per_room = num_adults // qty
+        children_per_room = num_children // qty
+        extra_adults = num_adults % qty
+        extra_children = num_children % qty
+
+        for i in range(qty):
+            room_adults = adults_per_room + (1 if i < extra_adults else 0)
+            room_children = children_per_room + (1 if i < extra_children else 0)
+            room_adults = min(room_adults, room.capacity_adults)
+            room_children = min(room_children, room.capacity_children)
+
+            idem_key = f"chat_confirm_{user.id}_{pid}_{check_in}_{check_out}_{room.id}_{i}"
+
+            existing = db.query(Booking).filter(Booking.idempotency_key == idem_key).first()
+            if existing:
+                created_bookings.append(existing)
+                continue
+
+            per_room_price = round(total_price, 2)
+
+            booking = Booking(
+                customer_id=user.id,
+                room_id=room.id,
+                group_id=group.id,
+                check_in=ci,
+                check_out=co,
+                num_adults=room_adults,
+                num_children=room_children,
+                room_adults=room_adults,
+                room_children=room_children,
+                status=BookingStatus.confirmed,
+                total_price=per_room_price,
+                idempotency_key=idem_key,
+            )
+            db.add(booking)
+            created_bookings.append(booking)
+
+    # Update trending score
+    prop.trending_score = (prop.trending_score or 0) + 1
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Successfully booked {len(created_bookings)} room(s) at {prop.name}!",
+        "data": {
+            "group_id": str(group.id),
+            "total_price": selected["total_price"],
+            "property_name": prop.name,
+            "nights": nights,
+            "num_rooms": selected["num_rooms"],
+            "bookings_count": len(created_bookings),
+        },
+        "formatted": (
+            f"✅ Booking confirmed at {prop.name}!\n"
+            f"\n"
+            f"  • {selected['num_rooms']} room(s) for {nights} night(s)\n"
+            f"  • {num_adults} adults"
+            + (f", {num_children} children" if num_children else "")
+            + f"\n  • Total: ₹{selected['total_price']:,.0f}\n"
+            f"\n"
+            f"You can view your booking in the My Bookings section."
+        ),
+    }
 def handle_rep_revenue_analytics(db: Session, user: User, start_date: str = None, end_date: str = None) -> dict:
     query = (
         db.query(Booking)
@@ -1646,10 +2211,13 @@ HANDLER_MAP: dict[str, object] = {
     "ADMIN_STATISTICS": handle_admin_statistics,
     "ADMIN_REP_LIST": handle_admin_rep_list,
     "MUTATION_CANCEL_BOOKING": handle_mutation_cancel_booking,
+    "MUTATION_CANCEL_GROUP": handle_mutation_cancel_group,
+    "MUTATION_CONFIRM_BOOKING": handle_mutation_confirm_booking,
     "REP_REVENUE_ANALYTICS": handle_rep_revenue_analytics,
     "MUTATION_REPLY_TO_REVIEW": handle_mutation_reply_to_review,
     "MUTATION_UPDATE_PROPERTY": handle_mutation_update_property,
     "PROPERTY_SEARCH": handle_property_search,
+    "CHAT_PLAN_BOOKING": handle_chat_plan_booking,
 }
 
 

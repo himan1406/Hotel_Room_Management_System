@@ -194,10 +194,13 @@ class Booking(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     customer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     room_id = Column(UUID(as_uuid=True), ForeignKey("rooms.id"), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("booking_groups.id"), nullable=True)
     check_in = Column(Date, nullable=False)
     check_out = Column(Date, nullable=False)
     num_adults = Column(Integer, nullable=False)
     num_children = Column(Integer, default=0)
+    room_adults = Column(Integer, nullable=True)
+    room_children = Column(Integer, default=0)
     status = Column(Enum(BookingStatus), default=BookingStatus.pending)
     total_price = Column(Float)
     idempotency_key = Column(String(255), unique=True)
@@ -206,6 +209,29 @@ class Booking(Base):
 
     customer = relationship("User", foreign_keys=[customer_id])
     room = relationship("Room")
+    group = relationship("BookingGroup", back_populates="bookings")
+
+    __table_args__ = (CheckConstraint("check_out > check_in"),)
+
+
+class BookingGroup(Base):
+    __tablename__ = "booking_groups"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    property_id = Column(UUID(as_uuid=True), ForeignKey("properties.id"), nullable=False)
+    check_in = Column(Date, nullable=False)
+    check_out = Column(Date, nullable=False)
+    num_adults = Column(Integer, nullable=False)
+    num_children = Column(Integer, default=0)
+    total_price = Column(Float)
+    idempotency_key = Column(String(255), unique=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    customer = relationship("User", foreign_keys=[customer_id])
+    property = relationship("Property")
+    bookings = relationship("Booking", back_populates="group")
 
     __table_args__ = (CheckConstraint("check_out > check_in"),)
 

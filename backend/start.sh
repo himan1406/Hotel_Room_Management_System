@@ -1,12 +1,15 @@
 #!/bin/sh
 set -e
 
-echo "[startup] Building frontend JS bundle..."
+echo "[startup] Installing frontend npm dependencies..."
 
 cd /app/frontend
 
-# esbuild is installed globally in the Docker image, so node build.js
-# works without needing node_modules from the host volume mount.
+# Install deps fresh inside the container (the host's node_modules
+# contains Windows binaries and is excluded via anonymous volume).
+npm install
+
+echo "[startup] Building frontend JS bundle..."
 node build.js
 
 echo "[startup] Frontend bundle built."

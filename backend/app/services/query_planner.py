@@ -190,22 +190,77 @@ def _role_specific_instructions(role: str | None) -> str:
         None: (
             "1. Use PROPERTY_SEARCH for questions about finding, listing, "
             "or browsing properties by location, type, or rating.\n"
-            "2. Use VECTOR_SEARCH for questions about policies, house rules, "
+            "2. Use CHAT_PLAN_BOOKING when the user wants to book rooms, "
+            "mentions dates and guest counts, or asks about booking options. "
+            "You MUST extract the property_id from context, check_in, check_out, "
+            "num_adults, and num_children from the user's message.\n"
+            "3. Use VECTOR_SEARCH for questions about policies, house rules, "
             "local guides, and amenities found in uploaded documents.\n"
-            "3. You CANNOT modify any data.\n"
-            "4. If no property or location is mentioned, do a broad search."
+            "4. You CANNOT modify any data.\n"
+            "5. If no property or location is mentioned, do a broad search."
         ),
         "customer": (
             "1. Use PROPERTY_SEARCH for questions about finding, listing, "
             "or browsing properties by location, type, or rating — e.g. "
             "'resorts in Uttarakhand', 'hotels in Goa', 'show me villas'.\n"
-            "2. Use VECTOR_SEARCH for questions about policies, cancellation, "
+            "2. Use CHAT_PLAN_BOOKING ONLY when the user provides check_in,"
+            " check_out, AND num_adults (dates and guest count) — either in"
+            " the current message or in conversation history. \n"
+            "   • If the user mentions a property but NOT dates or guest"
+            " counts, do NOT call CHAT_PLAN_BOOKING — there isn't enough"
+            " info. Instead, use PROPERTY_SEARCH to find property details.\n"
+            "   • If the user mentions dates but NOT a property or location,"
+            " do NOT call CHAT_PLAN_BOOKING — there isn't enough info.\n"
+            "   • If the user has provided all required details, call"
+            " CHAT_PLAN_BOOKING and extract check_in, check_out, num_adults,"
+            " and num_children from the context.\n"
+            "   • IMPORTANT — Convert human-readable dates to YYYY-MM-DD"
+            " format. For example: '25th july' becomes '2026-07-25',"
+            " 'july 25' becomes '2026-07-25', 'July 25th, 2026' becomes"
+            " '2026-07-25'. Always use 4-digit year and 2-digit month/day."
+            "3. Use VECTOR_SEARCH for questions about policies, cancellation, "
             "house rules, local guides, and transportation found in documents.\n"
-            "3. Use CUSTOMER_BOOKINGS for questions about "
+            "4. Use CUSTOMER_BOOKINGS for questions about "
             "'my bookings', 'my reservations', 'booking history', "
             "or 'my upcoming stays'.\n"
-            "4. You CANNOT modify any data EXCEPT cancelling bookings.\n"
-            "5. Use MUTATION_CANCEL_BOOKING to cancel a booking."
+            "5. You CANNOT modify any data EXCEPT cancelling bookings\n"
+            "   and confirming new bookings.\n"
+            "6. IMPORTANT — To cancel a booking, the Planner MUST follow this"
+            " two-step flow:\n"
+            "   STEP 1: When the user first says 'cancel' or 'cancel my booking',"
+            " ALWAYS call CUSTOMER_BOOKINGS first to retrieve the user's bookings"
+            " and get the group_id(s) from the results. Do NOT call"
+            " MUTATION_CANCEL_GROUP in this turn because you don't have the"
+            " group_id yet.\n"
+            "   If the user just says 'cancel' or 'cancel my booking' without"
+            " naming a specific property, still follow STEP 1 (call"
+            " CUSTOMER_BOOKINGS). The Answer Generator will then list their"
+            " bookings and ask which one to cancel — wait for the user to"
+            " specify before proceeding.\n"
+            "   If a user says 'cancel my X booking' where X is a property"
+            " name (e.g. 'cancel my Grand Palace booking'), check the property"
+            " name into resolve.property_names AND call CUSTOMER_BOOKINGS in"
+            " the same turn so the system can fetch both the property info and"
+            " the user's bookings.\n"
+            "   STEP 2: After the Answer Generator shows the bookings and the user"
+            " picks which one to cancel (e.g. 'cancel the one at The Grand Palace')"
+            " call MUTATION_CANCEL_GROUP with the group_id from the conversation"
+            " history. Use MUTATION_CANCEL_BOOKING to cancel a single individual"
+            " booking (not part of a group).\n"
+            "7. Use MUTATION_CONFIRM_BOOKING when the user says 'confirm', "
+            "'book it', 'yes do it', 'proceed', 'book the cheapest', "
+            "'book the recommended', or similar after seeing \n"
+            "booking options. CRITICAL: You MUST include the property"
+            " name (not UUID) from the conversation history in"
+            " resolve.property_names so the system can look up its UUID"
+            " automatically. You MUST extract check_in, check_out,"
+            " num_adults, num_children, and combination (cheapest or"
+            " recommended) from the conversation history. \n"
+            "When the user says 'book the cheapest' or similar, set \n"
+            "combination to 'cheapest'. When they say 'book the \n"
+            "recommended' or similar, set combination to 'recommended'.\n"
+            "NEVER try to extract a UUID as property_id — the system"
+            " handles resolving the property name to a UUID automatically."
         ),
         "hotel_rep": (
             "1. You can only access data belonging to your own properties.\n"
@@ -311,7 +366,7 @@ def build_planner_prompt(
 
 REQUIRED_TOOLS = {"VECTOR_SEARCH"}
 CUSTOMER_TOOLS = {
-    "CUSTOMER_BOOKINGS", "MUTATION_CANCEL_BOOKING"
+    "CUSTOMER_BOOKINGS", "MUTATION_CANCEL_BOOKING", "MUTATION_CANCEL_GROUP"
 }
 HOTEL_REP_TOOLS = {
     "REP_PROPERTIES", "REP_AVAILABILITY_TODAY", "REP_BOOKINGS",
@@ -334,7 +389,7 @@ ALL_VALID_TOOLS = (
     | HOTEL_REP_TOOLS
     | ADMIN_MUTATION_TOOLS
     | ADMIN_QUERY_TOOLS
-    | {"PROPERTY_SEARCH"}
+    | {"PROPERTY_SEARCH", "CHAT_PLAN_BOOKING", "MUTATION_CONFIRM_BOOKING"}
 )
 
 

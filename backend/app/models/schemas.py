@@ -123,6 +123,21 @@ class BookingCreate(BaseModel):
     idempotency_key: Optional[str] = Field(default=None, max_length=255)
 
 
+class BulkRoomItem(BaseModel):
+    room_id: UUID
+    quantity: int = Field(..., ge=1)
+    adults_per_room: list[int] = Field(default_factory=list)
+    children_per_room: list[int] = Field(default_factory=list)
+
+
+class BulkBookingRequest(BaseModel):
+    property_id: UUID
+    check_in: date
+    check_out: date
+    rooms: list[BulkRoomItem]
+    idempotency_key: Optional[str] = Field(default=None, max_length=255)
+
+
 class ReviewCreate(BaseModel):
     booking_id: UUID
     rating: int = Field(..., ge=1, le=5)

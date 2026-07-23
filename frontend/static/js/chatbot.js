@@ -276,7 +276,7 @@
                 const cleanTextForSpeech = data.reply
                     .replace(/\[PropertyCard:.*?\]/g, '')
                     .replace(/\[PendingHotel:.*?\]/g, '')
-                    .replace(/\[Action:.*?\]/g, '')
+                    .replace(/\[Action:[^\]]*\]/g, '')
                     .replace(/[*_#`~]/g, '');
                 
                 const utterance = new SpeechSynthesisUtterance(cleanTextForSpeech);
@@ -333,8 +333,21 @@
         });
 
         const actions = [];
+        // Note: confirm_booking is intentionally NOT in the list below — it is
+        // handled by the MUTATION_CONFIRM_BOOKING tool in the RAG pipeline, not
+        // via frontend action cards. The catch-all regex below strips any
+        // [Action: confirm_booking ...] markers the LLM might hallucinate.
         cleanText = cleanText.replace(/\[Action:\s*(approve_hotel|reject_hotel|deactivate_hotel_rep|activate_hotel_rep)\s*\|\s*([a-f0-9\-]{36})\s*\|\s*([^\]]+?)\]/gi, (match, action, id, name) => {
             actions.push({ action, id, name: name.trim() });
+            return "";
+        });
+
+        // Strip any completely unrecognized [Action: ...] markers
+        cleanText = cleanText.replace(/\[Action:[^\]]*\]/gi, '');
+
+        const bookingCards = [];
+        cleanText = cleanText.replace(/\[BookingCard:\s*([a-f0-9\-]{36})\s*\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*(\d+)\s*\|\s*(\d+)\]/gi, (match, propId, checkIn, checkOut, adults, children) => {
+            bookingCards.push({ propertyId: propId.trim(), checkIn: checkIn.trim(), checkOut: checkOut.trim(), adults: parseInt(adults), children: parseInt(children) });
             return "";
         });
         
@@ -346,8 +359,13 @@
         }
         div.appendChild(body);
 
-        // Append property card placeholders
-        propertyCards.forEach(card => {
+        // Append property card placeholders (deduplicated by ID)
+        const seenPropIds = new Set();
+        propertyCards.filter(card => {
+            if (seenPropIds.has(card.id)) return false;
+            seenPropIds.add(card.id);
+            return true;
+        }).forEach(card => {
             const placeholder = document.createElement("div");
             placeholder.className = "chat-property-card-placeholder";
             placeholder.setAttribute("data-property-id", card.id);
@@ -407,6 +425,19 @@
                 </div>
             `;
             div.appendChild(confirmDiv);
+        });
+
+        // Render booking card placeholders
+        bookingCards.forEach(bc => {
+            const placeholder = document.createElement("div");
+            placeholder.className = "chat-booking-card-placeholder";
+            placeholder.setAttribute("data-property-id", bc.propertyId);
+            placeholder.setAttribute("data-check-in", bc.checkIn);
+            placeholder.setAttribute("data-check-out", bc.checkOut);
+            placeholder.setAttribute("data-adults", bc.adults);
+            placeholder.setAttribute("data-children", bc.children);
+            placeholder.innerHTML = `<div class="chat-prop-card-loading">Loading booking options...</div>`;
+            div.appendChild(placeholder);
         });
 
         if (sources && sources.length > 0 && role === "assistant") {
@@ -500,7 +531,85 @@
             }
             container.scrollTop = container.scrollHeight;
         });
-        
+
+        // Async: load booking card options
+        document.querySelectorAll(".chat-booking-card-placeholder").forEach(placeholder => {
+            const propId = placeholder.getAttribute("data-property-id");
+            const checkIn = placeholder.getAttribute("data-check-in");
+            const checkOut = placeholder.getAttribute("data-check-out");
+            const adults = placeholder.getAttribute("data-adults");
+            const children = placeholder.getAttribute("data-children");
+
+            const url = `/api/properties/${propId}/booking-options?check_in=${checkIn}&check_out=${checkOut}&adults=${adults}&children=${children}`;
+
+            fetch(url, { credentials: "include" })
+                .then(r => r.json())
+                .then(data => {
+                    const cheapest = data.cheapest;
+                    const recommended = data.recommended;
+                    const nights = data.nights || 0;
+
+                    if (!cheapest && !recommended) {
+                        placeholder.innerHTML = `<div class="chat-booking-card"><div class="chat-booking-empty">No room combinations available for these dates and guests.</div></div>`;
+                        return;
+                    }
+
+                    const tabs = [];
+                    if (cheapest) tabs.push({ key: "cheapest", label: "Cheapest", data: cheapest });
+                    if (recommended) tabs.push({ key: "recommended", label: "Recommended", data: recommended });
+
+                    // If both are the same price, only show one tab
+                    if (tabs.length === 2 && cheapest.total_price === recommended.total_price) {
+                        tabs.pop();
+                    }
+
+                    let tabsHtml = tabs.map((t, i) => `<button class="chat-booking-tab ${i === 0 ? 'active' : ''}" data-tab="${t.key}">${t.label}</button>`).join("");
+
+                    let panelsHtml = tabs.map((t, i) => {
+                        const combo = t.data;
+                        const roomLines = combo.rooms.map(r =>
+                            `<div class="chat-booking-room-line">${r.qty}x ${escapeHtml(r.room_type)} <span class="chat-booking-room-price">₹${r.subtotal.toLocaleString()}</span></div>`
+                        ).join("");
+
+                        return `
+                            <div class="chat-booking-panel ${i === 0 ? 'active' : ''}" data-panel="${t.key}">
+                                <div class="chat-booking-rooms">${roomLines}</div>
+                                <div class="chat-booking-total">
+                                    Total: <strong>₹${combo.total_price.toLocaleString()}</strong>
+                                    <span class="chat-booking-nights">for ${nights} night${nights > 1 ? 's' : ''}</span>
+                                </div>
+                                <button class="chat-booking-confirm-btn" onclick="window._confirmChatBooking('${t.key}', '${propId}', '${checkIn}', '${checkOut}', ${adults}, ${children}, this)">
+                                    Confirm Booking
+                                </button>
+                            </div>
+                        `;
+                    }).join("");
+
+                    placeholder.innerHTML = `
+                        <div class="chat-booking-card">
+                            <div class="chat-booking-header">Booking Options</div>
+                            <div class="chat-booking-tabs">${tabsHtml}</div>
+                            <div class="chat-booking-panels">${panelsHtml}</div>
+                        </div>
+                    `;
+
+                    // Tab switching
+                    placeholder.querySelectorAll(".chat-booking-tab").forEach(tab => {
+                        tab.addEventListener("click", () => {
+                            placeholder.querySelectorAll(".chat-booking-tab").forEach(t => t.classList.remove("active"));
+                            placeholder.querySelectorAll(".chat-booking-panel").forEach(p => p.classList.remove("active"));
+                            tab.classList.add("active");
+                            placeholder.querySelector(`[data-panel="${tab.getAttribute('data-tab')}"]`).classList.add("active");
+                        });
+                    });
+                })
+                .catch(() => {
+                    placeholder.innerHTML = `<div class="chat-booking-card"><div class="chat-booking-empty">Failed to load booking options.</div></div>`;
+                });
+
+            container.scrollTop = container.scrollHeight;
+        });
+
         return div;
     }
 
@@ -547,6 +656,52 @@
             confirmDiv.innerHTML = `<div style="font-size:0.85rem; color:var(--good); padding:8px 0;">✓ ${escapeHtml(data.message)}</div>`;
         } catch (err) {
             confirmDiv.innerHTML = `<div style="font-size:0.85rem; color:var(--bad); padding:8px 0;">✗ ${escapeHtml(err.message)}</div>`;
+        }
+        const container = document.getElementById("aiChatMessages");
+        if (container) container.scrollTop = container.scrollHeight;
+    };
+
+    window._confirmChatBooking = async function (combination, propertyId, checkIn, checkOut, adults, children, btnEl) {
+        const panel = btnEl.closest(".chat-booking-panel");
+        if (!panel) return;
+        btnEl.disabled = true;
+        btnEl.textContent = "Booking...";
+
+        try {
+            const res = await fetch("/api/chat/booking-confirm", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "include",
+                body: JSON.stringify({
+                    property_id: propertyId,
+                    check_in: checkIn,
+                    check_out: checkOut,
+                    adults: adults,
+                    children: children,
+                    combination: combination,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Booking failed");
+
+            const bookingList = data.bookings.map(b =>
+                `<div class="chat-booking-result-line">✓ ${escapeHtml(b.room_type)} — ₹${b.total_price.toLocaleString()}</div>`
+            ).join("");
+
+            panel.innerHTML = `
+                <div class="chat-booking-success">
+                    <div class="chat-booking-success-title">✓ ${escapeHtml(data.message)}</div>
+                    ${bookingList}
+                    <div class="chat-booking-success-total">Total: ₹${data.total_price.toLocaleString()}</div>
+                </div>
+            `;
+        } catch (err) {
+            btnEl.disabled = false;
+            btnEl.textContent = "Confirm Booking";
+            const errDiv = document.createElement("div");
+            errDiv.className = "chat-booking-error";
+            errDiv.textContent = "✗ " + err.message;
+            panel.appendChild(errDiv);
         }
         const container = document.getElementById("aiChatMessages");
         if (container) container.scrollTop = container.scrollHeight;

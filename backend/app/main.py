@@ -6,7 +6,7 @@ from app.routers.auth import auth
 from app.routers.admin import admin
 from app.routers.hotel import hotels
 from app.routers.customers import properties, bookings, reviews
-from app.routers.communication import messages, chat, chat_admin, rag
+from app.routers.communication import messages, chat, chat_admin, chat_booking, rag
 from app.routers import pages
 from app.services import ws
 
@@ -25,5 +25,6 @@ app.include_router(reviews.router)
 app.include_router(rag.router)
 app.include_router(chat.router)
 app.include_router(chat_admin.router)
+app.include_router(chat_booking.router)
 app.include_router(ws.router)
 app.include_router(pages.router)

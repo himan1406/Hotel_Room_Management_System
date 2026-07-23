@@ -76,7 +76,7 @@ function build() {
     // Run esbuild on the concatenated file
     // Uses the globally installed esbuild (or the one from node_modules/.bin)
     execSync(
-      `esbuild "${tempFile}" --minify --outfile="${OUTPUT_FILE}" --allow-overwrite`,
+      `npx esbuild "${tempFile}" --minify --outfile="${OUTPUT_FILE}" --allow-overwrite`,
       {
         cwd: path.join(__dirname),
         stdio: "inherit",

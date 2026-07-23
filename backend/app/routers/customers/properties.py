@@ -279,6 +279,42 @@ def list_property_documents_public(property_id: uuid.UUID, db: Session = Depends
     ]
 
 
+@router.get("/{property_id}/booking-options")
+def get_booking_options(
+    property_id: uuid.UUID,
+    check_in: date = Query(...),
+    check_out: date = Query(...),
+    adults: int = Query(1, ge=1),
+    children: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    prop = db.query(Property).filter(
+        Property.id == property_id,
+        Property.is_approved == True,  # noqa: E712
+        Property.is_active == True,  # noqa: E712
+    ).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+
+    if check_out <= check_in:
+        raise HTTPException(status_code=400, detail="Check-out must be after check-in")
+    if check_in < date.today():
+        raise HTTPException(status_code=400, detail="Check-in cannot be in the past")
+
+    from app.services.room_combiner import compute_booking_options
+
+    options = compute_booking_options(
+        db=db,
+        property_id=property_id,
+        check_in=check_in,
+        check_out=check_out,
+        num_adults=adults,
+        num_children=children,
+    )
+
+    return options
+
+
 from pydantic import BaseModel
 from app.core.llm import ask_llm
 

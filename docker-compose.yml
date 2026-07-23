@@ -38,6 +38,10 @@ services:
     volumes:
       - ./backend:/app
       - ./frontend:/app/frontend
+      # Anonymous volume: prevents the host's Windows node_modules from
+      # overriding the container's Linux node_modules (esbuild binaries
+      # are platform-specific and will fail if mismatched).
+      - /app/frontend/node_modules
     depends_on:
       db:
         condition: service_healthy
