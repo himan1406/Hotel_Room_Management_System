@@ -1034,56 +1034,79 @@ def _strip_hallucinated_action_markers(reply: str) -> str:
 
 
 def _auto_inject_property_card(reply: str, tool_results: dict) -> str:
-    """Inject a [PropertyCard: ...] marker if tools returned property data
-    but the LLM didn't include one in its reply.
+    """Inject [PropertyCard: ...] markers if tools returned property data
+    but the LLM didn't include them in its reply.
 
-    This ensures the frontend always renders a property card when the
-    conversation is about a specific property.
+    Collects ALL property IDs from tool results (PROPERTY_SEARCH,
+    VECTOR_SEARCH, CHAT_PLAN_BOOKING) and appends any that are missing
+    from the reply. This ensures the frontend renders clickable cards
+    for EVERY property the LLM discusses.
     """
-    if _PROPERTY_CARD_RE.search(reply):
-        return reply  # Already has one
+    # Collect all property IDs from all tools that returned data
+    candidate_ids: list[str] = []
 
-    # Find property IDs from any tool that references properties
-    prop_id = None
+    # Check PROPERTY_SEARCH — multiple properties
+    search = tool_results.get("PROPERTY_SEARCH")
+    if search and search.get("success"):
+        data = search.get("data", {})
+        props = data.get("properties", [])
+        for p in props:
+            pid = p.get("id")
+            if pid:
+                candidate_ids.append(pid)
 
-    # Check CHAT_PLAN_BOOKING first (highest priority)
+    # Check VECTOR_SEARCH — multiple documents with property IDs
+    vs = tool_results.get("VECTOR_SEARCH")
+    if vs and vs.get("success"):
+        data = vs.get("data", [])
+        seen = set()
+        for d in data:
+            pid = d.get("property_id")
+            if pid and pid not in seen:
+                seen.add(pid)
+                candidate_ids.append(pid)
+
+    # Check CHAT_PLAN_BOOKING — single property
     booking = tool_results.get("CHAT_PLAN_BOOKING")
     if booking and booking.get("success"):
         formatted = booking.get("formatted", "")
-        pc_match = re.search(
+        for m in re.finditer(
             r'\[PropertyCard:\s*([a-f0-9\-]{36})', formatted, re.IGNORECASE
-        )
-        if pc_match:
-            prop_id = pc_match.group(1)
+        ):
+            pid = m.group(1)
+            if pid not in candidate_ids:
+                candidate_ids.append(pid)
 
-    # Check PROPERTY_SEARCH
-    if not prop_id:
-        search = tool_results.get("PROPERTY_SEARCH")
-        if search and search.get("success"):
-            data = search.get("data", {})
-            props = data.get("properties", [])
-            if props:
-                prop_id = props[0].get("id")
+    # Check REP_PROPERTIES — multiple rep-owned properties
+    rep = tool_results.get("REP_PROPERTIES")
+    if rep and rep.get("success"):
+        data = rep.get("data", {})
+        props = data.get("properties", [])
+        for p in props:
+            pid = p.get("id")
+            if pid and pid not in candidate_ids:
+                candidate_ids.append(pid)
 
-    # Check VECTOR_SEARCH
-    if not prop_id:
-        vs = tool_results.get("VECTOR_SEARCH")
-        if vs and vs.get("success"):
-            data = vs.get("data", [])
-            if data:
-                prop_id = data[0].get("property_id")
-
-    if not prop_id:
+    if not candidate_ids:
         return reply
 
-    # Validate it's a proper UUID
-    try:
-        uuid_lib.UUID(prop_id)
-    except ValueError:
+    # Validate UUIDs and filter out any that already have a marker in the reply
+    valid_ids: list[str] = []
+    for pid in candidate_ids:
+        try:
+            uuid_lib.UUID(pid)
+        except ValueError:
+            continue
+        if re.search(rf'\[PropertyCard:\s*{re.escape(pid)}\s*(?:\||\])', reply, re.IGNORECASE):
+            continue  # Already present in the reply
+        valid_ids.append(pid)
+
+    if not valid_ids:
         return reply
 
-    marker = f"[PropertyCard: {prop_id}]"
-    return f"{reply}\n\n{marker}"
+    # Append all missing markers
+    markers = "\n".join(f"[PropertyCard: {pid}]" for pid in valid_ids)
+    return f"{reply}\n\n{markers}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -1509,7 +1509,7 @@ def handle_property_search(
         amenities = [k.replace("_", " ") for k, v in (p.amenities or {}).items() if v][:5]
 
         lines.append(
-            f"  - {p.name} (ID: {p.id}) | {prop_type} | "
+            f"  - {p.name} [PropertyCard: {p.id}] | {prop_type} | "
             f"{full_location} | {rating}★ ({review_count} reviews) | "
             f"{price_range}"
             + (f" | Amenities: {', '.join(amenities)}" if amenities else "")
